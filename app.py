@@ -380,7 +380,10 @@ def main_app():
         st.title(f"👤 {user['name']}님")
         st.caption(f"{user['role']} | {user['companyName']}")
         
-        menu = st.radio("메뉴 선택", ["📊 샘플관리 현황판", "📝 신규 샘플 의뢰", "🗑️ 휴지통 (삭제 내역)", "💾 백업 관리"])
+        menu_options = ["📊 샘플관리 현황판", "📝 신규 샘플 의뢰", "🗑️ 휴지통 (삭제 내역)", "💾 백업 관리"]
+        if user['role'] == 'ADMIN':
+            menu_options.append("📁 데이터 관리")
+        menu = st.radio("메뉴 선택", menu_options)
         
         st.divider()
         if st.button("🔄 데이터 새로고침 (구글폼 동기화)"):
@@ -1322,6 +1325,206 @@ def main_app():
         **수동 백업**
         - 위의 '수동 백업 생성' 버튼을 클릭하여 언제든지 백업을 생성할 수 있습니다
         """)
+    
+    # --- 5. 데이터 관리 (관리자 전용) ---
+    elif menu == "📁 데이터 관리":
+        st.header("📁 데이터 관리")
+        st.info("💡 예전 데이터를 엑셀 파일로 업로드하여 시스템에 추가할 수 있습니다.")
+        
+        st.divider()
+        st.subheader("📤 예전 데이터 업로드")
+        
+        col_info, col_upload = st.columns([1, 1])
+        
+        with col_info:
+            st.markdown("""
+            **사용 방법:**
+            1. 엑셀 파일을 준비하세요 (템플릿 다운로드 가능)
+            2. 파일을 업로드하면 기존 데이터에 자동으로 병합됩니다
+            3. 중복된 NO는 자동으로 건너뜁니다
+            4. NO가 없으면 자동으로 생성됩니다
+            
+            **지원 형식:**
+            - .xlsx (Excel 2007 이상)
+            - .xls (Excel 97-2003)
+            """)
+        
+        with col_upload:
+            # 엑셀 템플릿 다운로드
+            def create_upload_template():
+                template_df = pd.DataFrame(columns=[
+                    'NO', '접수일', '업체명', '부서', '담당자', '차종', '품번', '품명', 
+                    '출하장소', '요청수량', '납기일', '요청사항', '도면접수일', 
+                    '자재 요청일', '자재준비', '샘플 완료일', '출하일', '운송편', '비고', 
+                    '샘플단가', '샘플금액'
+                ])
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    template_df.to_excel(writer, index=False, sheet_name='Sheet1')
+                return output.getvalue()
+            
+            template_data = create_upload_template()
+            st.download_button(
+                "📋 업로드용 템플릿 다운로드", 
+                data=template_data, 
+                file_name="data_upload_template.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+            
+            st.divider()
+            
+            uploaded_file = st.file_uploader(
+                "📤 엑셀 파일 업로드", 
+                type=['xlsx', 'xls'],
+                help="예전 데이터가 포함된 엑셀 파일을 선택하세요"
+            )
+            
+            if uploaded_file:
+                with st.spinner("파일을 읽는 중..."):
+                    try:
+                        new_data = pd.read_excel(uploaded_file)
+                        
+                        # 컬럼명을 한글로 변환 (영문 컬럼명이 있을 경우 대비)
+                        column_mapping = {
+                            'NO': 'NO', 'no': 'NO', 'No': 'NO',
+                            '접수일': '접수일', 'requestDate': '접수일',
+                            '업체명': '업체명', 'companyName': '업체명',
+                            '부서': '부서', 'department': '부서',
+                            '담당자': '담당자', 'contactPerson': '담당자',
+                            '차종': '차종', 'carModel': '차종',
+                            '품번': '품번', 'partNumber': '품번',
+                            '품명': '품명', 'partName': '품명',
+                            '출하장소': '출하장소', 'shippingLocation': '출하장소',
+                            '요청수량': '요청수량', 'quantity': '요청수량',
+                            '납기일': '납기일', 'dueDate': '납기일',
+                            '샘플단가': '샘플단가', 'samplePrice': '샘플단가',
+                            '샘플금액': '샘플금액', 'sampleAmount': '샘플금액',
+                            '요청사항': '요청사항', 'requirements': '요청사항',
+                            '도면접수일': '도면접수일', 'drawingReceiptDate': '도면접수일',
+                            '자재 요청일': '자재 요청일', 'materialRequestDate': '자재 요청일',
+                            '자재준비': '자재준비', 'materialPreparation': '자재준비',
+                            '샘플 완료일': '샘플 완료일', 'sampleCompletionDate': '샘플 완료일',
+                            '출하일': '출하일', 'shipmentDate': '출하일',
+                            '운송편': '운송편', 'shippingMethod': '운송편',
+                            '비고': '비고', 'remarks': '비고'
+                        }
+                        new_data = new_data.rename(columns=column_mapping)
+                        
+                        st.success(f"✅ 파일 읽기 완료: {len(new_data)}개 행 발견")
+                        
+                        # 미리보기
+                        with st.expander("📋 업로드할 데이터 미리보기", expanded=True):
+                            st.dataframe(new_data.head(10), use_container_width=True)
+                            if len(new_data) > 10:
+                                st.caption(f"총 {len(new_data)}개 행 중 처음 10개만 표시됩니다.")
+                        
+                        # NO 컬럼이 없으면 자동 생성
+                        if 'NO' not in new_data.columns:
+                            if not st.session_state.df.empty and 'NO' in st.session_state.df.columns:
+                                max_no = st.session_state.df['NO'].max()
+                                start_no = int(max_no) + 1 if pd.notnull(max_no) else 1001
+                            else:
+                                start_no = 1001
+                            new_data['NO'] = range(start_no, start_no + len(new_data))
+                            st.info(f"ℹ️ 'NO' 컬럼이 없어 자동으로 생성했습니다. (시작 번호: {start_no})")
+                        
+                        # 업로드 확인
+                        st.divider()
+                        col_confirm1, col_confirm2 = st.columns(2)
+                        with col_confirm1:
+                            if st.button("✅ 데이터 업로드 실행", use_container_width=True, type="primary"):
+                                # NO 중복 체크 및 병합 로직
+                                if 'NO' in st.session_state.df.columns:
+                                    current_nos = st.session_state.df['NO'].tolist()
+                                    to_add = []
+                                    duplicates = []
+                                    
+                                    for _, row in new_data.iterrows():
+                                        row_no = row.get('NO')
+                                        if pd.isna(row_no) or row_no == "":
+                                            # NO가 없으면 자동 생성
+                                            if not st.session_state.df.empty and 'NO' in st.session_state.df.columns:
+                                                max_no = st.session_state.df['NO'].max()
+                                                row_no = int(max_no) + 1 if pd.notnull(max_no) else int(datetime.datetime.now().timestamp())
+                                            else:
+                                                row_no = int(datetime.datetime.now().timestamp())
+                                            row['NO'] = row_no
+                                            to_add.append(row.to_dict())
+                                        elif row_no not in current_nos:
+                                            to_add.append(row.to_dict())
+                                        else:
+                                            duplicates.append(row_no)
+                                    
+                                    if duplicates:
+                                        st.warning(f"⚠️ 중복된 NO {len(duplicates)}개는 건너뜁니다: {duplicates[:5]}{'...' if len(duplicates) > 5 else ''}")
+                                    
+                                    if to_add:
+                                        # 날짜 컬럼 변환
+                                        date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
+                                        for item in to_add:
+                                            for col in date_columns:
+                                                if col in item and item[col]:
+                                                    try:
+                                                        item[col] = pd.to_datetime(item[col], errors='coerce').date()
+                                                    except:
+                                                        item[col] = None
+                                        
+                                        new_df = pd.DataFrame(to_add)
+                                        st.session_state.df = pd.concat([new_df, st.session_state.df], ignore_index=True)
+                                        # 진행상태 업데이트
+                                        st.session_state.df = update_progress_status(st.session_state.df)
+                                        save_data()
+                                        st.success(f"✅ {len(to_add)}개 항목이 성공적으로 추가되었습니다!")
+                                        if duplicates:
+                                            st.info(f"ℹ️ 중복 항목 {len(duplicates)}개는 제외되었습니다.")
+                                        time.sleep(2)
+                                        st.rerun()
+                                    else:
+                                        st.warning("⚠️ 추가할 새로운 데이터가 없습니다. 모든 항목이 이미 존재하거나 중복입니다.")
+                                else:
+                                    # 원본 데이터프레임에 NO 컬럼이 없는 경우
+                                    if 'NO' not in new_data.columns:
+                                        new_data['NO'] = range(1001, 1001 + len(new_data))
+                                    
+                                    # 날짜 컬럼 변환
+                                    date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
+                                    for col in date_columns:
+                                        if col in new_data.columns:
+                                            new_data[col] = pd.to_datetime(new_data[col], errors='coerce').dt.date
+                                    
+                                    new_data = update_progress_status(new_data)
+                                    st.session_state.df = pd.concat([new_data, st.session_state.df], ignore_index=True) if not st.session_state.df.empty else new_data
+                                    save_data()
+                                    st.success(f"✅ {len(new_data)}개 항목이 성공적으로 추가되었습니다!")
+                                    time.sleep(2)
+                                    st.rerun()
+                        
+                        with col_confirm2:
+                            if st.button("❌ 취소", use_container_width=True):
+                                st.info("업로드가 취소되었습니다.")
+                                st.rerun()
+                                
+                    except Exception as e:
+                        st.error(f"❌ 업로드 실패: {str(e)}")
+                        st.exception(e)
+        
+        st.divider()
+        st.subheader("📊 현재 데이터 통계")
+        if not st.session_state.df.empty:
+            col_stat1, col_stat2, col_stat3 = st.columns(3)
+            with col_stat1:
+                st.metric("총 데이터 건수", f"{len(st.session_state.df)}건")
+            with col_stat2:
+                if '업체명' in st.session_state.df.columns:
+                    unique_companies = st.session_state.df['업체명'].nunique()
+                    st.metric("등록된 업체 수", f"{unique_companies}개")
+            with col_stat3:
+                if 'NO' in st.session_state.df.columns:
+                    max_no = st.session_state.df['NO'].max()
+                    st.metric("최대 NO", f"{int(max_no) if pd.notnull(max_no) else 'N/A'}")
+        else:
+            st.info("현재 데이터가 없습니다.")
 
 # -----------------------------------------------------------------------------
 # 앱 실행 진입점
