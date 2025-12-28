@@ -257,6 +257,17 @@ def convert_dataframe_types(df):
     
     return df
 
+def get_deleted_nos():
+    """삭제된 NO 목록을 반환하는 함수"""
+    deleted_nos = set()
+    if 'deleted_history' in st.session_state and st.session_state.deleted_history:
+        for item in st.session_state.deleted_history:
+            if isinstance(item, dict):
+                no = item.get('NO') or item.get('no') or item.get('id')
+                if no is not None and pd.notnull(no):
+                    deleted_nos.add(int(no) if isinstance(no, (int, float)) else no)
+    return deleted_nos
+
 def load_data():
     """데이터 로드 메인 함수"""
     # 삭제 기록 먼저 초기화 (save_data_to_local() 호출 전에 필요)
@@ -270,6 +281,9 @@ def load_data():
         else:
             st.session_state.deleted_history = []
     
+    # 삭제된 NO 목록 가져오기
+    deleted_nos = get_deleted_nos()
+    
     if 'df' not in st.session_state:
         # 1. 구글 시트에서 최신 데이터 가져오기 시도
         df = load_data_from_google_sheets()
@@ -277,6 +291,14 @@ def load_data():
         if df is not None and not df.empty:
             st.session_state.df = convert_dataframe_types(df)
             st.session_state.df = update_progress_status(st.session_state.df)
+            # 삭제된 NO 필터링 (중요: 삭제된 데이터는 제외)
+            if 'NO' in st.session_state.df.columns and deleted_nos:
+                before_count = len(st.session_state.df)
+                st.session_state.df = st.session_state.df[~st.session_state.df['NO'].isin(deleted_nos)]
+                after_count = len(st.session_state.df)
+                if before_count != after_count:
+                    # 삭제된 항목이 필터링되었음을 로그에 기록 (필요시)
+                    pass
             # 구글 시트 데이터가 있으면 로컬에도 백업 저장
             save_data_to_local() 
         elif os.path.exists(DATA_FILE):
@@ -287,6 +309,9 @@ def load_data():
                     st.session_state.df = pd.DataFrame(data)
                     st.session_state.df = convert_dataframe_types(st.session_state.df)
                     st.session_state.df = update_progress_status(st.session_state.df)
+                    # 삭제된 NO 필터링
+                    if 'NO' in st.session_state.df.columns and deleted_nos:
+                        st.session_state.df = st.session_state.df[~st.session_state.df['NO'].isin(deleted_nos)]
             except:
                 st.session_state.df = pd.DataFrame(INITIAL_DATA)
                 st.session_state.df = convert_dataframe_types(st.session_state.df)
@@ -295,6 +320,15 @@ def load_data():
             st.session_state.df = pd.DataFrame(INITIAL_DATA)
             st.session_state.df = convert_dataframe_types(st.session_state.df)
             st.session_state.df = update_progress_status(st.session_state.df)
+    else:
+        # df가 이미 있는 경우에도 삭제된 NO 필터링 (구글 시트 새로고침 시 대비)
+        if 'NO' in st.session_state.df.columns and deleted_nos:
+            before_count = len(st.session_state.df)
+            st.session_state.df = st.session_state.df[~st.session_state.df['NO'].isin(deleted_nos)]
+            after_count = len(st.session_state.df)
+            if before_count != after_count:
+                # 삭제된 항목이 필터링되었음을 확인
+                save_data_to_local()  # 필터링된 데이터 저장
 
 def save_data():
     """데이터 저장 (CSV 방식은 읽기 전용이므로 로컬에만 저장)"""
@@ -387,7 +421,7 @@ def main_app():
         
         st.divider()
         if st.button("🔄 데이터 새로고침 (구글폼 동기화)"):
-            # 강제로 다시 로드
+            # 강제로 다시 로드 (삭제된 데이터는 자동으로 필터링됨)
             if 'df' in st.session_state:
                 del st.session_state.df
             st.rerun()
@@ -820,10 +854,19 @@ def main_app():
                         if deleted_items:
                             if 'deleted_history' not in st.session_state:
                                 st.session_state.deleted_history = []
-                            st.session_state.deleted_history.extend(deleted_items)
+                            # 삭제된 항목을 deleted_history에 추가 (NO 확실히 저장)
+                            for item in deleted_items:
+                                # NO가 없으면 추가
+                                if 'NO' not in item or pd.isna(item.get('NO')):
+                                    # 인덱스나 다른 방법으로 NO 찾기
+                                    if 'NO' in filtered_df.columns:
+                                        # 이미 item_dict에 NO가 포함되어 있어야 함
+                                        pass
+                                st.session_state.deleted_history.append(item)
                             st.session_state.selected_rows = set()
+                            # 삭제된 데이터는 df에서 제거되었으므로 저장
                             save_data()
-                            st.success(f"{len(deleted_items)}건이 삭제되어 휴지통으로 이동했습니다.")
+                            st.success(f"{len(deleted_items)}건이 삭제되어 휴지통으로 이동했습니다. (삭제된 NO: {[item.get('NO', 'N/A') for item in deleted_items[:5]]}{'...' if len(deleted_items) > 5 else ''})")
                             st.rerun()
                 
                 with col_action3:
