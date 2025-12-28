@@ -94,3 +94,4 @@ client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/ssep-s
 
 **성공 시**: 카드 형태로 업체명, 품목명, 납기일, 진행상황이 표시됩니다! 🎉
 
+

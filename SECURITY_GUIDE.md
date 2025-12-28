@@ -225,3 +225,4 @@ C:\Users\mfg32\OneDrive\바탕 화면\automation\ssep-dev-sample\ssep_history.js
 **최종 업데이트:** 2024년 12월
 **문서 버전:** 1.0
 
+

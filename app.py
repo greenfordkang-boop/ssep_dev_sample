@@ -5,6 +5,8 @@ import time
 import json
 import os
 from io import BytesIO
+import urllib.request
+import urllib.error
 
 # -----------------------------------------------------------------------------
 # 1. 초기 설정 및 상수
@@ -97,7 +99,33 @@ def load_data_from_google_sheets():
     """구글 시트(CSV)에서 데이터를 읽어와 앱 형식에 맞게 변환"""
     try:
         # 1. CSV 데이터 읽기 (에러 나는 줄은 건너뜀)
-        df = pd.read_csv(SPREADSHEET_URL, on_bad_lines='skip', encoding='utf-8')
+        # urllib을 사용하여 더 명확한 에러 처리
+        try:
+            with urllib.request.urlopen(SPREADSHEET_URL, timeout=10) as response:
+                df = pd.read_csv(response, on_bad_lines='skip', encoding='utf-8')
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                st.error("""
+                **❌ 구글 시트 접근 권한 오류 (401 Unauthorized)**
+                
+                **해결 방법:**
+                1. 구글 시트를 열어주세요: https://docs.google.com/spreadsheets/d/1IsBdfSpLDAughGyjr2APO4_LxPWxC0Pbj0h4jTjyz5U
+                2. 우측 상단의 **"공유"** 버튼을 클릭하세요
+                3. **"링크가 있는 모든 사용자"** 또는 **"모든 사용자"**에게 **"뷰어"** 권한을 부여하세요
+                4. 설정 후 잠시 기다린 뒤 "데이터 새로고침" 버튼을 클릭하세요
+                
+                ⚠️ 시트가 비공개로 설정되어 있으면 CSV export가 작동하지 않습니다.
+                """)
+                return None
+            elif e.code == 403:
+                st.error("""
+                **❌ 구글 시트 접근 거부 (403 Forbidden)**
+                
+                시트에 대한 접근 권한이 없습니다. 시트 소유자에게 접근 권한을 요청하세요.
+                """)
+                return None
+            else:
+                raise e
         
         if df.empty:
             return None
@@ -129,8 +157,25 @@ def load_data_from_google_sheets():
             df['NO'] = range(1001, 1001 + len(df))
 
         return df
+    except urllib.error.URLError as e:
+        st.error(f"**❌ 네트워크 오류**: 구글 시트에 연결할 수 없습니다. 인터넷 연결을 확인하세요.\n\n오류: {e}")
+        return None
     except Exception as e:
-        st.error(f"구글 시트 데이터 로드 실패: {e}")
+        error_msg = str(e)
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            st.error("""
+            **❌ 구글 시트 접근 권한 오류 (401 Unauthorized)**
+            
+            **해결 방법:**
+            1. 구글 시트를 열어주세요: https://docs.google.com/spreadsheets/d/1IsBdfSpLDAughGyjr2APO4_LxPWxC0Pbj0h4jTjyz5U
+            2. 우측 상단의 **"공유"** 버튼을 클릭하세요
+            3. **"링크가 있는 모든 사용자"** 또는 **"모든 사용자"**에게 **"뷰어"** 권한을 부여하세요
+            4. 설정 후 잠시 기다린 뒤 "데이터 새로고침" 버튼을 클릭하세요
+            
+            ⚠️ 시트가 비공개로 설정되어 있으면 CSV export가 작동하지 않습니다.
+            """)
+        else:
+            st.error(f"**❌ 구글 시트 데이터 로드 실패**: {error_msg}\n\n로컬 파일을 사용합니다.")
         return None
 
 def create_backup_manual():
@@ -350,29 +395,102 @@ def main_app():
             st.warning("데이터가 없습니다. 구글 폼으로 접수하거나 로컬 데이터를 확인하세요.")
             st.stop()  # 데이터가 없으면 여기서 중단
         
-        # 접수 목록 실시간 표시 (업체명, 품목명, 납기일, 진행상황)
+        # 접수 목록 실시간 표시 (리스트 형태)
         st.subheader("📋 접수된 샘플 요청 목록")
         if not df.empty and '업체명' in df.columns:
-            # 최근 접수된 항목들을 표시 (최대 10개)
+            # 최근 접수된 항목들을 표시 (최대 20개)
             display_df = df.copy()
             if '접수일' in display_df.columns:
                 display_df = display_df.sort_values('접수일', ascending=False, na_position='last')
-            display_df = display_df.head(10)
+            display_df = display_df.head(20)
             
-            # 카드 형태로 표시
-            cols = st.columns(4)
+            # 클릭된 항목을 저장할 session_state 초기화
+            if 'clicked_item_no' not in st.session_state:
+                st.session_state.clicked_item_no = None
+            
+            # 리스트 형태로 표시 (테이블 형식)
+            list_data = []
             for idx, row in display_df.iterrows():
-                col_idx = idx % 4
-                with cols[col_idx]:
-                    with st.container():
-                        st.markdown(f"""
-                        <div style="border: 1px solid #ddd; border-radius: 5px; padding: 10px; margin-bottom: 10px; background-color: #f9f9f9;">
-                            <h4 style="margin: 0; color: #1f77b4;">{row.get('업체명', 'N/A')}</h4>
-                            <p style="margin: 5px 0; font-size: 0.9em;"><strong>품목:</strong> {row.get('품명', 'N/A')}</p>
-                            <p style="margin: 5px 0; font-size: 0.9em;"><strong>납기일:</strong> {row.get('납기일', 'N/A')}</p>
-                            <p style="margin: 5px 0; font-size: 0.9em;"><strong>진행상황:</strong> <span style="color: #ff6b6b;">{row.get('진행상태', 'N/A')}</span></p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                item_no = row.get('NO', idx)
+                업체명 = row.get('업체명', 'N/A')
+                품명 = row.get('품명', 'N/A')
+                납기일 = row.get('납기일', 'N/A')
+                진행상태 = row.get('진행상태', 'N/A')
+                접수일 = row.get('접수일', 'N/A')
+                
+                # 진행상태에 따른 색상
+                status_color = {
+                    '출하완료': '#28a745',
+                    '생산중': '#ffc107',
+                    '자재준비중': '#17a2b8',
+                    '접수': '#6c757d'
+                }.get(진행상태, '#6c757d')
+                
+                list_data.append({
+                    'NO': item_no,
+                    '접수일': 접수일 if isinstance(접수일, str) else (접수일.strftime('%Y-%m-%d') if hasattr(접수일, 'strftime') else str(접수일)),
+                    '업체명': 업체명,
+                    '품명': 품명,
+                    '납기일': 납기일 if isinstance(납기일, str) else (납기일.strftime('%Y-%m-%d') if hasattr(납기일, 'strftime') else str(납기일)),
+                    '진행상태': 진행상태
+                })
+            
+            # 리스트를 데이터프레임으로 변환하여 표시
+            if list_data:
+                list_df = pd.DataFrame(list_data)
+                
+                # 헤더 표시
+                header_cols = st.columns([0.5, 1.2, 1.5, 2.5, 2, 1.2, 1.2, 1.5])
+                with header_cols[0]:
+                    st.write("**순번**")
+                with header_cols[1]:
+                    st.write("**NO**")
+                with header_cols[2]:
+                    st.write("**접수일**")
+                with header_cols[3]:
+                    st.write("**업체명**")
+                with header_cols[4]:
+                    st.write("**품명**")
+                with header_cols[5]:
+                    st.write("**납기일**")
+                with header_cols[6]:
+                    st.write("**진행상태**")
+                with header_cols[7]:
+                    st.write("**작업**")
+                st.divider()
+                
+                # 각 행 표시
+                for i, row in list_df.iterrows():
+                    cols = st.columns([0.5, 1.2, 1.5, 2.5, 2, 1.2, 1.2, 1.5])
+                    with cols[0]:
+                        st.write(f"{i+1}")
+                    with cols[1]:
+                        st.write(f"**{row['NO']}**")
+                    with cols[2]:
+                        st.write(row['접수일'])
+                    with cols[3]:
+                        st.write(f"**{row['업체명']}**")
+                    with cols[4]:
+                        st.write(row['품명'])
+                    with cols[5]:
+                        st.write(row['납기일'])
+                    with cols[6]:
+                        # 진행상태 색상 적용
+                        status_icon = {
+                            '출하완료': '🟢',
+                            '생산중': '🟡',
+                            '자재준비중': '🔵',
+                            '접수': '⚪'
+                        }.get(row['진행상태'], '⚪')
+                        st.write(f"{status_icon} {row['진행상태']}")
+                    with cols[7]:
+                        # 클릭 버튼
+                        if st.button("📌 보기", key=f"view_{row['NO']}_{i}", use_container_width=True):
+                            st.session_state.clicked_item_no = row['NO']
+                            st.rerun()
+                    
+                    if i < len(list_df) - 1:
+                        st.divider()
         else:
             st.info("접수된 샘플 요청이 없습니다.")
         
@@ -428,12 +546,28 @@ def main_app():
                 filter_출하일_시작 = st.date_input("출하일 시작", value=None, key="ship_date_start")
                 filter_출하일_종료 = st.date_input("출하일 종료", value=None, key="ship_date_end")
         
+        # 클릭된 항목이 있으면 알림 표시 및 필터 초기화 옵션 제공
+        if st.session_state.clicked_item_no is not None:
+            clicked_item = df[df['NO'] == st.session_state.clicked_item_no] if 'NO' in df.columns else pd.DataFrame()
+            if not clicked_item.empty:
+                item_info = clicked_item.iloc[0]
+                st.success(f"📌 선택된 항목: NO.{st.session_state.clicked_item_no} - {item_info.get('업체명', 'N/A')} / {item_info.get('품명', 'N/A')}")
+                col_reset1, col_reset2 = st.columns([1, 10])
+                with col_reset1:
+                    if st.button("❌ 필터 초기화", key="reset_clicked_item"):
+                        st.session_state.clicked_item_no = None
+                        st.rerun()
+        
         # 필터링 로직 (대시보드와 테이블 모두 동일한 필터 적용)
         filtered_df = df.copy()
         # CUSTOMER는 본인 회사의 모든 샘플 요청을 볼 수 있도록 필터링
         if user['role'] != 'ADMIN' and '업체명' in filtered_df.columns:
             # 업체명이 정확히 일치하는 모든 데이터 표시
             filtered_df = filtered_df[filtered_df['업체명'] == user['companyName']]
+        
+        # 클릭된 항목이 있으면 해당 항목만 표시
+        if st.session_state.clicked_item_no is not None and 'NO' in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df['NO'] == st.session_state.clicked_item_no]
             
         if search_term:
             mask = filtered_df.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)
