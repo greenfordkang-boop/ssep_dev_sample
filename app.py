@@ -182,10 +182,31 @@ def save_data_to_google_sheets(df, history):
             history_worksheet = spreadsheet.add_worksheet(title="삭제내역", rows=1000, cols=30)
         
         if history:
-            history_headers = list(history[0].keys()) if history else []
-            history_values = [history_headers] + [[str(v) for v in row.values()] for row in history]
-            history_worksheet.clear()
-            history_worksheet.update(history_values, value_input_option='USER_ENTERED')
+            # history를 안전하게 변환
+            history_list = []
+            for item in history:
+                if isinstance(item, dict):
+                    # 딕셔너리의 모든 값을 문자열로 변환
+                    clean_item = {}
+                    for key, value in item.items():
+                        if value is None:
+                            clean_item[key] = ""
+                        elif isinstance(value, (datetime.date, datetime.datetime)):
+                            clean_item[key] = str(value)
+                        elif not isinstance(value, (str, int, float, bool)):
+                            clean_item[key] = str(value)
+                        else:
+                            clean_item[key] = value
+                    history_list.append(clean_item)
+                elif item is not None:
+                    # 딕셔너리가 아닌 경우 문자열로 변환
+                    history_list.append({"data": str(item)})
+            
+            if history_list:
+                history_headers = list(history_list[0].keys())
+                history_values = [history_headers] + [[str(v) if v is not None else "" for v in row.values()] for row in history_list]
+                history_worksheet.clear()
+                history_worksheet.update(history_values, value_input_option='USER_ENTERED')
         
         # 백업 시트 생성 (타임스탬프 포함) - 최근 10개만 유지
         try:
@@ -332,8 +353,29 @@ def save_data_to_local():
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     
+    # deleted_history를 JSON 직렬화 가능한 형태로 변환
+    history_data = []
+    if st.session_state.deleted_history:
+        for item in st.session_state.deleted_history:
+            if isinstance(item, dict):
+                # 딕셔너리의 모든 값을 문자열로 변환
+                clean_item = {}
+                for key, value in item.items():
+                    if value is None:
+                        clean_item[key] = ""
+                    elif isinstance(value, (datetime.date, datetime.datetime)):
+                        clean_item[key] = str(value)
+                    elif not isinstance(value, (str, int, float, bool, list, dict)):
+                        clean_item[key] = str(value)
+                    else:
+                        clean_item[key] = value
+                history_data.append(clean_item)
+            elif item is not None:
+                # 딕셔너리가 아닌 경우 문자열로 변환
+                history_data.append({"data": str(item)})
+    
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(st.session_state.deleted_history, f, ensure_ascii=False, indent=2)
+        json.dump(history_data, f, ensure_ascii=False, indent=2)
 
 # -----------------------------------------------------------------------------
 # 3. 로그인 화면 (LoginScreen.tsx 대응)
