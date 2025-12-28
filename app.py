@@ -18,7 +18,7 @@ except ImportError:
 # -----------------------------------------------------------------------------
 # 1. 초기 설정 및 상수 (constants.ts, types.ts 대응)
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="Shinsung EP Sample System", layout="wide", page_icon="🏭")
+st.set_page_config(page_title="신성EP 통합 샘플 관리 대장", layout="wide", page_icon="🏭")
 
 DATA_FILE = "ssep_data.json"
 HISTORY_FILE = "ssep_history.json"
@@ -149,7 +149,57 @@ def load_data_from_google_sheets():
         st.error(f"Google Sheets 로드 오류: {e}")
         return None
 
-def save_data_to_google_sheets(df, history):
+def create_backup_manual():
+    """수동 백업 생성"""
+    if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
+        return save_data_to_google_sheets(st.session_state.df, st.session_state.deleted_history, create_backup=True)
+    else:
+        # 로컬 파일 백업
+        save_data_to_local()
+        return True
+
+def get_backup_list():
+    """백업 목록 가져오기"""
+    if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
+        try:
+            spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+            all_sheets = spreadsheet.worksheets()
+            backup_sheets = [s for s in all_sheets if s.title.startswith("백업_")]
+            backup_sheets.sort(key=lambda x: x.title, reverse=True)
+            return backup_sheets
+        except Exception as e:
+            st.error(f"백업 목록 조회 오류: {e}")
+            return []
+    else:
+        # 로컬 파일 백업 정보
+        backups = []
+        if os.path.exists(DATA_FILE):
+            file_time = datetime.datetime.fromtimestamp(os.path.getmtime(DATA_FILE))
+            backups.append({
+                "name": "로컬 파일 백업",
+                "date": file_time.strftime('%Y-%m-%d %H:%M:%S'),
+                "type": "local"
+            })
+        return backups
+
+def download_backup_from_sheets(backup_sheet_name):
+    """Google Sheets 백업 다운로드"""
+    try:
+        spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+        backup_worksheet = spreadsheet.worksheet(backup_sheet_name)
+        data = backup_worksheet.get_all_records()
+        df = pd.DataFrame(data)
+        
+        # Excel로 변환
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Sheet1')
+        return output.getvalue()
+    except Exception as e:
+        st.error(f"백업 다운로드 오류: {e}")
+        return None
+
+def save_data_to_google_sheets(df, history, create_backup=False):
     """Google Sheets에 데이터 저장"""
     try:
         spreadsheet = gc.open_by_key(SPREADSHEET_ID)
@@ -208,21 +258,22 @@ def save_data_to_google_sheets(df, history):
                 history_worksheet.clear()
                 history_worksheet.update(history_values, value_input_option='USER_ENTERED')
         
-        # 백업 시트 생성 (타임스탬프 포함) - 최근 10개만 유지
-        try:
-            backup_sheet_name = f"백업_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            backup_worksheet = spreadsheet.add_worksheet(title=backup_sheet_name, rows=1000, cols=30)
-            backup_worksheet.update(values, value_input_option='USER_ENTERED')
-            
-            # 오래된 백업 시트 삭제 (최근 10개만 유지)
-            all_sheets = spreadsheet.worksheets()
-            backup_sheets = [s for s in all_sheets if s.title.startswith("백업_")]
-            backup_sheets.sort(key=lambda x: x.title, reverse=True)
-            if len(backup_sheets) > 10:
-                for old_sheet in backup_sheets[10:]:
-                    spreadsheet.del_worksheet(old_sheet)
-        except:
-            pass  # 백업 실패해도 계속 진행
+        # 백업 시트 생성 (타임스탬프 포함) - 최근 10개만 유지 (create_backup=True일 때만)
+        if create_backup:
+            try:
+                backup_sheet_name = f"백업_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                backup_worksheet = spreadsheet.add_worksheet(title=backup_sheet_name, rows=1000, cols=30)
+                backup_worksheet.update(values, value_input_option='USER_ENTERED')
+                
+                # 오래된 백업 시트 삭제 (최근 10개만 유지)
+                all_sheets = spreadsheet.worksheets()
+                backup_sheets = [s for s in all_sheets if s.title.startswith("백업_")]
+                backup_sheets.sort(key=lambda x: x.title, reverse=True)
+                if len(backup_sheets) > 10:
+                    for old_sheet in backup_sheets[10:]:
+                        spreadsheet.del_worksheet(old_sheet)
+            except:
+                pass  # 백업 실패해도 계속 진행
         
         return True
     except Exception as e:
@@ -330,7 +381,7 @@ def load_data():
 def save_data():
     # Google Sheets 사용 시
     if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
-        success = save_data_to_google_sheets(st.session_state.df, st.session_state.deleted_history)
+        success = save_data_to_google_sheets(st.session_state.df, st.session_state.deleted_history, create_backup=False)
         if not success:
             # Google Sheets 저장 실패 시 로컬 파일로 백업
             save_data_to_local()
@@ -389,7 +440,7 @@ def login_screen():
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.title("🔒 Shinsung EP System")
+        st.title("🔒 신성EP 샘플 관리 시스템")
         st.write("Authorized Access Only")
         
         with st.form("login_form"):
@@ -420,7 +471,7 @@ def main_app():
         st.title(f"👤 {user['name']}님")
         st.caption(f"{user['role']} | {user['companyName']}")
         
-        menu = st.radio("메뉴 선택", ["📊 실시간 생산 대장", "📝 신규 샘플 의뢰", "🗑️ 휴지통 (삭제 내역)"])
+        menu = st.radio("메뉴 선택", ["📊 샘플관리 현황판", "📝 신규 샘플 의뢰", "🗑️ 휴지통 (삭제 내역)", "💾 백업 관리"])
         
         st.divider()
         if st.button("로그아웃"):
@@ -430,9 +481,9 @@ def main_app():
         st.divider()
         st.info("💡 팁: 테이블에서 데이터를 직접 수정할 수 있습니다. (엔터 키 입력 시 자동 저장)")
 
-    # --- 1. 실시간 생산 대장 (Dashboard & Table) ---
-    if menu == "📊 실시간 생산 대장":
-        st.title("🏭 신성EP 통합 샘플 관리 대장")
+    # --- 1. 샘플관리 현황판 (Dashboard & Table) ---
+    if menu == "📊 샘플관리 현황판":
+        st.title("🏭 신성EP 샘플 관리 현황판")
         st.markdown(f"**v7.2 Python Edition** | 현재 시간: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
         
         # 최신 데이터 가져오기 (항상 최신 상태 유지)
@@ -1155,6 +1206,114 @@ def main_app():
                         save_data()
                         st.success("복구 완료!")
                         st.rerun()
+
+    # --- 4. 백업 관리 ---
+    elif menu == "💾 백업 관리":
+        st.header("💾 백업 관리")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.subheader("백업 생성")
+            if st.button("🔄 수동 백업 생성", use_container_width=True, type="primary"):
+                with st.spinner("백업 생성 중..."):
+                    success = create_backup_manual()
+                    if success:
+                        st.success("✅ 백업이 성공적으로 생성되었습니다!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("❌ 백업 생성에 실패했습니다.")
+        
+        with col2:
+            st.subheader("백업 정보")
+            if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
+                st.info("📊 Google Sheets 백업 사용 중")
+                st.caption("자동 백업: 데이터 저장 시마다 실행")
+                st.caption("백업 보관: 최근 10개")
+            else:
+                st.info("💾 로컬 파일 백업 사용 중")
+                st.caption("백업 위치: 프로젝트 폴더")
+        
+        st.divider()
+        
+        st.subheader("백업 목록")
+        backups = get_backup_list()
+        
+        if not backups:
+            st.info("백업이 없습니다.")
+        else:
+            if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
+                # Google Sheets 백업 목록
+                st.write(f"**총 {len(backups)}개의 백업이 있습니다.**")
+                
+                for i, backup_sheet in enumerate(backups):
+                    backup_name = backup_sheet.title
+                    # 백업_20241215_143022 형식에서 날짜 추출
+                    try:
+                        date_str = backup_name.replace("백업_", "")
+                        if len(date_str) >= 15:
+                            year = date_str[:4]
+                            month = date_str[4:6]
+                            day = date_str[6:8]
+                            hour = date_str[9:11]
+                            minute = date_str[11:13]
+                            second = date_str[13:15]
+                            formatted_date = f"{year}-{month}-{day} {hour}:{minute}:{second}"
+                        else:
+                            formatted_date = backup_name
+                    except:
+                        formatted_date = backup_name
+                    
+                    with st.expander(f"📦 {formatted_date} - {backup_name}"):
+                        col_dl, col_info = st.columns([1, 2])
+                        with col_dl:
+                            backup_data = download_backup_from_sheets(backup_name)
+                            if backup_data:
+                                st.download_button(
+                                    label="💾 Excel 파일 다운로드",
+                                    data=backup_data,
+                                    file_name=f"{backup_name}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key=f"dl_{i}"
+                                )
+                        with col_info:
+                            st.caption(f"백업 시트: {backup_name}")
+                            st.caption(f"생성일: {formatted_date}")
+            else:
+                # 로컬 파일 백업 정보
+                for backup in backups:
+                    with st.expander(f"📦 {backup['name']}"):
+                        st.write(f"**생성일**: {backup['date']}")
+                        st.write(f"**위치**: {DATA_FILE}, {HISTORY_FILE}")
+                        # 현재 데이터를 Excel로 다운로드
+                        df_copy = st.session_state.df.copy()
+                        date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
+                        for col in date_columns:
+                            if col in df_copy.columns:
+                                df_copy[col] = df_copy[col].apply(lambda x: str(x) if pd.notnull(x) and x is not None else "")
+                        
+                        output = BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            df_copy.to_excel(writer, index=False, sheet_name='Sheet1')
+                        
+                        st.download_button(
+                            label="💾 Excel 파일 다운로드",
+                            data=output.getvalue(),
+                            file_name=f"백업_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_local"
+                        )
+        
+        st.divider()
+        st.subheader("백업 설정")
+        st.info("""
+        **자동 백업**
+        - Google Sheets 사용 시: 데이터 저장 시마다 자동으로 백업 생성
+        - 최근 10개의 백업이 자동으로 유지됩니다
+        
+        **수동 백업**
+        - 위의 '수동 백업 생성' 버튼을 클릭하여 언제든지 백업을 생성할 수 있습니다
+        """)
 
 # -----------------------------------------------------------------------------
 # 앱 실행 진입점
