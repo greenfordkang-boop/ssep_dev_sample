@@ -6,57 +6,18 @@ import json
 import os
 from io import BytesIO
 
-# Google Sheets 연동 (온라인 데이터 저장 및 백업)
-try:
-    import gspread
-    from google.oauth2.service_account import Credentials
-    GOOGLE_SHEETS_AVAILABLE = True
-except ImportError:
-    GOOGLE_SHEETS_AVAILABLE = False
-    st.warning("Google Sheets 라이브러리가 설치되지 않았습니다. 로컬 파일을 사용합니다.")
-
 # -----------------------------------------------------------------------------
-# 1. 초기 설정 및 상수 (constants.ts, types.ts 대응)
+# 1. 초기 설정 및 상수
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="신성EP 통합 샘플 관리 대장", layout="wide", page_icon="🏭")
 
 DATA_FILE = "ssep_data.json"
 HISTORY_FILE = "ssep_history.json"
 
-# Google Sheets 설정 (환경 변수 또는 Streamlit Secrets에서 가져오기)
-# Streamlit Cloud에서는 st.secrets를 사용, 로컬에서는 환경 변수 사용
-USE_GOOGLE_SHEETS = os.getenv("USE_GOOGLE_SHEETS", "false").lower() == "true"
-
-# Google Sheets 설정
-if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
-    try:
-        # Streamlit Secrets에서 설정 가져오기 (배포 시)
-        if hasattr(st, 'secrets') and 'google_sheets' in st.secrets:
-            creds_info = st.secrets['google_sheets']
-            scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-            creds = Credentials.from_service_account_info(creds_info, scopes=scope)
-            gc = gspread.authorize(creds)
-            SPREADSHEET_ID = st.secrets['google_sheets']['spreadsheet_id']
-        # 환경 변수에서 설정 가져오기 (로컬 개발 시)
-        elif os.getenv("GOOGLE_SHEETS_CREDENTIALS"):
-            import json as json_module
-            creds_json = json_module.loads(os.getenv("GOOGLE_SHEETS_CREDENTIALS"))
-            scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-            creds = Credentials.from_service_account_info(creds_json, scopes=scope)
-            gc = gspread.authorize(creds)
-            SPREADSHEET_ID = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID")
-        else:
-            USE_GOOGLE_SHEETS = False
-            gc = None
-            SPREADSHEET_ID = None
-    except Exception as e:
-        USE_GOOGLE_SHEETS = False
-        gc = None
-        SPREADSHEET_ID = None
-        st.warning(f"Google Sheets 설정 오류: {e}. 로컬 파일을 사용합니다.")
-else:
-    gc = None
-    SPREADSHEET_ID = None
+# [중요] 구글 시트 CSV 변환 주소 (읽기 전용)
+# 사장님의 시트 ID: 1IsBdfSpLDAughGyjr2APO4_LxPWxC0Pbj0h4jTjyz5U
+SHEET_ID = "1IsBdfSpLDAughGyjr2APO4_LxPWxC0Pbj0h4jTjyz5U"
+SPREADSHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
 # 초기 데이터 (템플릿 구조에 맞춤)
 INITIAL_DATA = [
@@ -113,20 +74,16 @@ INITIAL_DATA = [
 # -----------------------------------------------------------------------------
 def calculate_progress_status(row):
     """진행상태를 계산하는 함수"""
-    # 출하일이 있으면 출하완료
-    if pd.notnull(row.get('출하일')) and row.get('출하일') is not None and row.get('출하일') != "":
+    if pd.notnull(row.get('출하일')) and row.get('출하일') != "":
         return "출하완료"
-    # 샘플 완료일이 있으면 생산중
-    elif pd.notnull(row.get('샘플 완료일')) and row.get('샘플 완료일') is not None and row.get('샘플 완료일') != "":
+    elif pd.notnull(row.get('샘플 완료일')) and row.get('샘플 완료일') != "":
         return "생산중"
-    # 자재준비가 있으면 자재준비중
-    elif pd.notnull(row.get('자재준비')) and row.get('자재준비') is not None and row.get('자재준비') != "":
+    elif pd.notnull(row.get('자재준비')) and row.get('자재준비') != "":
         return "자재준비중"
-    # 접수일이 있으면 접수
-    elif pd.notnull(row.get('접수일')) and row.get('접수일') is not None and row.get('접수일') != "":
+    elif pd.notnull(row.get('접수일')) and row.get('접수일') != "":
         return "접수"
     else:
-        return ""
+        return "접수"
 
 def update_progress_status(df):
     """데이터프레임의 모든 행에 대해 진행상태를 계산하여 업데이트"""
@@ -137,60 +94,71 @@ def update_progress_status(df):
     return df
 
 def load_data_from_google_sheets():
-    """Google Sheets에서 데이터 로드"""
+    """구글 시트(CSV)에서 데이터를 읽어와 앱 형식에 맞게 변환"""
     try:
-        spreadsheet = gc.open_by_key(SPREADSHEET_ID)
-        worksheet = spreadsheet.worksheet("데이터")
-        data = worksheet.get_all_records()
-        if not data:
+        # 1. CSV 데이터 읽기 (에러 나는 줄은 건너뜀)
+        df = pd.read_csv(SPREADSHEET_URL, on_bad_lines='skip', encoding='utf-8')
+        
+        if df.empty:
             return None
-        return pd.DataFrame(data)
+        
+        # 2. 구글 폼 헤더를 앱 내부 컬럼명으로 변경 (매핑)
+        # 폼 질문: 타임스탬프, 업체명, 담당자 성함, 연락처, 이메일, 품목명, 요청수량, 납기희망일, 요청사항 및 비고
+        rename_map = {
+            '타임스탬프': '접수일',
+            '담당자 성함': '담당자',
+            '품목명': '품명',
+            '납기희망일': '납기일',
+            '요청사항 및 비고': '요청사항'
+        }
+        df = df.rename(columns=rename_map)
+
+        # 3. 날짜 형식 정리 (타임스탬프 2024. 12. 28... -> 2024-12-28)
+        if '접수일' in df.columns:
+            df['접수일'] = pd.to_datetime(df['접수일'], errors='coerce').dt.date
+        
+        # 4. 없는 컬럼 채우기 (앱 작동을 위해 필수)
+        required_cols = ['NO', '부서', '차종', '품번', '출하장소', '자재준비', '샘플 완료일', '출하일', '비고', '샘플단가', '샘플금액', '운송편', '도면접수일', '자재 요청일']
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = ""  # 빈 값으로 생성
+
+        # 5. NO(주문번호) 자동 생성 (없으면 인덱스 기반으로 생성)
+        # 구글 폼에는 NO가 없으므로 1000번부터 시작해서 자동으로 붙임
+        if 'NO' not in df.columns or df['NO'].isnull().all() or (df['NO'] == "").all():
+            df['NO'] = range(1001, 1001 + len(df))
+
+        return df
     except Exception as e:
-        st.error(f"Google Sheets 로드 오류: {e}")
+        st.error(f"구글 시트 데이터 로드 실패: {e}")
         return None
 
 def create_backup_manual():
     """수동 백업 생성"""
-    if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
-        return save_data_to_google_sheets(st.session_state.df, st.session_state.deleted_history, create_backup=True)
-    else:
-        # 로컬 파일 백업
-        save_data_to_local()
-        return True
+    save_data_to_local()
+    return True
 
 def get_backup_list():
     """백업 목록 가져오기"""
-    if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
-        try:
-            spreadsheet = gc.open_by_key(SPREADSHEET_ID)
-            all_sheets = spreadsheet.worksheets()
-            backup_sheets = [s for s in all_sheets if s.title.startswith("백업_")]
-            backup_sheets.sort(key=lambda x: x.title, reverse=True)
-            return backup_sheets
-        except Exception as e:
-            st.error(f"백업 목록 조회 오류: {e}")
-            return []
-    else:
-        # 로컬 파일 백업 정보
-        backups = []
-        if os.path.exists(DATA_FILE):
-            file_time = datetime.datetime.fromtimestamp(os.path.getmtime(DATA_FILE))
-            backups.append({
-                "name": "로컬 파일 백업",
-                "date": file_time.strftime('%Y-%m-%d %H:%M:%S'),
-                "type": "local"
-            })
-        return backups
+    backups = []
+    if os.path.exists(DATA_FILE):
+        file_time = datetime.datetime.fromtimestamp(os.path.getmtime(DATA_FILE))
+        backups.append({
+            "name": "로컬 파일 백업",
+            "date": file_time.strftime('%Y-%m-%d %H:%M:%S'),
+            "type": "local"
+        })
+    return backups
 
 def download_backup_from_sheets(backup_sheet_name):
-    """Google Sheets 백업 다운로드"""
+    """백업 다운로드"""
     try:
-        spreadsheet = gc.open_by_key(SPREADSHEET_ID)
-        backup_worksheet = spreadsheet.worksheet(backup_sheet_name)
-        data = backup_worksheet.get_all_records()
-        df = pd.DataFrame(data)
+        df = st.session_state.df.copy()
+        date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
+        for col in date_columns:
+            if col in df.columns:
+                df[col] = df[col].apply(lambda x: str(x) if pd.notnull(x) and x is not None else "")
         
-        # Excel로 변환
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Sheet1')
@@ -198,87 +166,6 @@ def download_backup_from_sheets(backup_sheet_name):
     except Exception as e:
         st.error(f"백업 다운로드 오류: {e}")
         return None
-
-def save_data_to_google_sheets(df, history, create_backup=False):
-    """Google Sheets에 데이터 저장"""
-    try:
-        spreadsheet = gc.open_by_key(SPREADSHEET_ID)
-        
-        # 데이터 시트 업데이트
-        try:
-            worksheet = spreadsheet.worksheet("데이터")
-        except:
-            worksheet = spreadsheet.add_worksheet(title="데이터", rows=1000, cols=30)
-        
-        # DataFrame을 리스트로 변환
-        df_copy = df.copy()
-        date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
-        for col in date_columns:
-            if col in df_copy.columns:
-                df_copy[col] = df_copy[col].apply(lambda x: str(x) if pd.notnull(x) and x is not None else "")
-        
-        # 헤더와 데이터 준비
-        headers = df_copy.columns.tolist()
-        values = [headers] + df_copy.values.tolist()
-        
-        # 시트 클리어 후 새 데이터 쓰기
-        worksheet.clear()
-        worksheet.update(values, value_input_option='USER_ENTERED')
-        
-        # 히스토리 시트 업데이트
-        try:
-            history_worksheet = spreadsheet.worksheet("삭제내역")
-        except:
-            history_worksheet = spreadsheet.add_worksheet(title="삭제내역", rows=1000, cols=30)
-        
-        if history:
-            # history를 안전하게 변환
-            history_list = []
-            for item in history:
-                if isinstance(item, dict):
-                    # 딕셔너리의 모든 값을 문자열로 변환
-                    clean_item = {}
-                    for key, value in item.items():
-                        if value is None:
-                            clean_item[key] = ""
-                        elif isinstance(value, (datetime.date, datetime.datetime)):
-                            clean_item[key] = str(value)
-                        elif not isinstance(value, (str, int, float, bool)):
-                            clean_item[key] = str(value)
-                        else:
-                            clean_item[key] = value
-                    history_list.append(clean_item)
-                elif item is not None:
-                    # 딕셔너리가 아닌 경우 문자열로 변환
-                    history_list.append({"data": str(item)})
-            
-            if history_list:
-                history_headers = list(history_list[0].keys())
-                history_values = [history_headers] + [[str(v) if v is not None else "" for v in row.values()] for row in history_list]
-                history_worksheet.clear()
-                history_worksheet.update(history_values, value_input_option='USER_ENTERED')
-        
-        # 백업 시트 생성 (타임스탬프 포함) - 최근 10개만 유지 (create_backup=True일 때만)
-        if create_backup:
-            try:
-                backup_sheet_name = f"백업_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                backup_worksheet = spreadsheet.add_worksheet(title=backup_sheet_name, rows=1000, cols=30)
-                backup_worksheet.update(values, value_input_option='USER_ENTERED')
-                
-                # 오래된 백업 시트 삭제 (최근 10개만 유지)
-                all_sheets = spreadsheet.worksheets()
-                backup_sheets = [s for s in all_sheets if s.title.startswith("백업_")]
-                backup_sheets.sort(key=lambda x: x.title, reverse=True)
-                if len(backup_sheets) > 10:
-                    for old_sheet in backup_sheets[10:]:
-                        spreadsheet.del_worksheet(old_sheet)
-            except:
-                pass  # 백업 실패해도 계속 진행
-        
-        return True
-    except Exception as e:
-        st.error(f"Google Sheets 저장 오류: {e}")
-        return False
 
 def convert_dataframe_types(df):
     """데이터프레임의 타입 변환 (공통 함수)"""
@@ -309,46 +196,24 @@ def convert_dataframe_types(df):
     return df
 
 def load_data():
+    """데이터 로드 메인 함수"""
     if 'df' not in st.session_state:
-        # Google Sheets 사용 시
-        if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
-            df = load_data_from_google_sheets()
-            if df is not None and not df.empty:
-                st.session_state.df = convert_dataframe_types(df)
-                # 진행상태 계산 및 업데이트
-                st.session_state.df = update_progress_status(st.session_state.df)
-            else:
-                st.session_state.df = pd.DataFrame(INITIAL_DATA)
-                st.session_state.df = convert_dataframe_types(st.session_state.df)
-                st.session_state.df = update_progress_status(st.session_state.df)
-                # 초기 데이터를 Google Sheets에 저장
-                save_data_to_google_sheets(st.session_state.df, [])
-        # 로컬 파일 사용 시
+        # 1. 구글 시트에서 최신 데이터 가져오기 시도
+        df = load_data_from_google_sheets()
+        
+        if df is not None and not df.empty:
+            st.session_state.df = convert_dataframe_types(df)
+            st.session_state.df = update_progress_status(st.session_state.df)
+            # 구글 시트 데이터가 있으면 로컬에도 백업 저장
+            save_data_to_local() 
         elif os.path.exists(DATA_FILE):
+            # 2. 구글 시트 실패 시 로컬 파일 로드
             try:
                 with open(DATA_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     st.session_state.df = pd.DataFrame(data)
-                    # 날짜 컬럼을 datetime 타입으로 변환
-                    date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
-                    for col in date_columns:
-                        if col in st.session_state.df.columns:
-                            st.session_state.df[col] = pd.to_datetime(st.session_state.df[col], errors='coerce').dt.date
-                            # 빈 날짜는 None으로 처리
-                            st.session_state.df[col] = st.session_state.df[col].where(pd.notnull(st.session_state.df[col]), None)
-                # 숫자 컬럼을 숫자 타입으로 변환
-                numeric_columns = ['요청수량', '샘플단가', '샘플금액', 'NO']
-                for col in numeric_columns:
-                    if col in st.session_state.df.columns:
-                        st.session_state.df[col] = pd.to_numeric(st.session_state.df[col], errors='coerce')
-                        st.session_state.df[col] = st.session_state.df[col].where(pd.notnull(st.session_state.df[col]), 0)
-                # 문자열 컬럼을 문자열 타입으로 변환 (float로 잘못 인식되는 것을 방지)
-                text_columns = ['업체명', '부서', '담당자', '차종', '품번', '품명', '출하장소', '요청사항', '자재준비', '운송편', '비고', '진행상태']
-                for col in text_columns:
-                    if col in st.session_state.df.columns:
-                        st.session_state.df[col] = st.session_state.df[col].astype(str).replace('nan', '').replace('None', '')
-                # 진행상태 계산 및 업데이트
-                st.session_state.df = update_progress_status(st.session_state.df)
+                    st.session_state.df = convert_dataframe_types(st.session_state.df)
+                    st.session_state.df = update_progress_status(st.session_state.df)
             except:
                 st.session_state.df = pd.DataFrame(INITIAL_DATA)
                 st.session_state.df = convert_dataframe_types(st.session_state.df)
@@ -358,18 +223,9 @@ def load_data():
             st.session_state.df = convert_dataframe_types(st.session_state.df)
             st.session_state.df = update_progress_status(st.session_state.df)
 
+    # 삭제 기록 로드
     if 'deleted_history' not in st.session_state:
-        # Google Sheets 사용 시
-        if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
-            try:
-                spreadsheet = gc.open_by_key(SPREADSHEET_ID)
-                history_worksheet = spreadsheet.worksheet("삭제내역")
-                history_data = history_worksheet.get_all_records()
-                st.session_state.deleted_history = history_data if history_data else []
-            except:
-                st.session_state.deleted_history = []
-        # 로컬 파일 사용 시
-        elif os.path.exists(HISTORY_FILE):
+        if os.path.exists(HISTORY_FILE):
             try:
                 with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
                     st.session_state.deleted_history = json.load(f)
@@ -379,37 +235,28 @@ def load_data():
             st.session_state.deleted_history = []
 
 def save_data():
-    # Google Sheets 사용 시
-    if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
-        success = save_data_to_google_sheets(st.session_state.df, st.session_state.deleted_history, create_backup=False)
-        if not success:
-            # Google Sheets 저장 실패 시 로컬 파일로 백업
-            save_data_to_local()
-    else:
-        # 로컬 파일 저장
-        save_data_to_local()
+    """데이터 저장 (CSV 방식은 읽기 전용이므로 로컬에만 저장)"""
+    save_data_to_local()
+    st.toast("⚠️ 주의: 구글 시트(CSV) 방식은 '읽기 전용'입니다. 변경사항은 앱이 켜져있는 동안만 유지됩니다.")
 
 def save_data_to_local():
     """로컬 파일에 데이터 저장 (백업용)"""
-    # DataFrame을 dict list로 변환하여 JSON 저장
-    # 날짜 타입을 문자열로 변환
     df_copy = st.session_state.df.copy()
+    # 날짜를 문자열로 변환
     date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
     for col in date_columns:
         if col in df_copy.columns:
-            # date 타입을 문자열로 변환 (None은 빈 문자열로)
             df_copy[col] = df_copy[col].apply(lambda x: str(x) if pd.notnull(x) and x is not None else "")
     
     data = df_copy.to_dict('records')
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     
-    # deleted_history를 JSON 직렬화 가능한 형태로 변환
+    # deleted_history 저장
     history_data = []
     if st.session_state.deleted_history:
         for item in st.session_state.deleted_history:
             if isinstance(item, dict):
-                # 딕셔너리의 모든 값을 문자열로 변환
                 clean_item = {}
                 for key, value in item.items():
                     if value is None:
@@ -422,7 +269,6 @@ def save_data_to_local():
                         clean_item[key] = value
                 history_data.append(clean_item)
             elif item is not None:
-                # 딕셔너리가 아닌 경우 문자열로 변환
                 history_data.append({"data": str(item)})
     
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
@@ -474,6 +320,13 @@ def main_app():
         menu = st.radio("메뉴 선택", ["📊 샘플관리 현황판", "📝 신규 샘플 의뢰", "🗑️ 휴지통 (삭제 내역)", "💾 백업 관리"])
         
         st.divider()
+        if st.button("🔄 데이터 새로고침 (구글폼 동기화)"):
+            # 강제로 다시 로드
+            if 'df' in st.session_state:
+                del st.session_state.df
+            st.rerun()
+            
+        st.divider()
         if st.button("로그아웃"):
             del st.session_state.user
             st.rerun()
@@ -485,11 +338,45 @@ def main_app():
     if menu == "📊 샘플관리 현황판":
         st.title("🏭 신성EP 샘플 관리 현황판")
         st.markdown(f"**v7.2 Python Edition** | 현재 시간: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        st.info("💡 '데이터 새로고침' 버튼을 누르면 구글 폼에서 들어온 최신 주문이 표시됩니다.")
         
         # 최신 데이터 가져오기 (항상 최신 상태 유지)
         # 진행상태를 먼저 업데이트하여 최신 상태 보장
-        st.session_state.df = update_progress_status(st.session_state.df)
-        df = st.session_state.df.copy()
+        if 'df' in st.session_state and not st.session_state.df.empty:
+            st.session_state.df = update_progress_status(st.session_state.df)
+        df = st.session_state.df.copy() if 'df' in st.session_state else pd.DataFrame()
+        
+        if df.empty:
+            st.warning("데이터가 없습니다. 구글 폼으로 접수하거나 로컬 데이터를 확인하세요.")
+            st.stop()  # 데이터가 없으면 여기서 중단
+        
+        # 접수 목록 실시간 표시 (업체명, 품목명, 납기일, 진행상황)
+        st.subheader("📋 접수된 샘플 요청 목록")
+        if not df.empty and '업체명' in df.columns:
+            # 최근 접수된 항목들을 표시 (최대 10개)
+            display_df = df.copy()
+            if '접수일' in display_df.columns:
+                display_df = display_df.sort_values('접수일', ascending=False, na_position='last')
+            display_df = display_df.head(10)
+            
+            # 카드 형태로 표시
+            cols = st.columns(4)
+            for idx, row in display_df.iterrows():
+                col_idx = idx % 4
+                with cols[col_idx]:
+                    with st.container():
+                        st.markdown(f"""
+                        <div style="border: 1px solid #ddd; border-radius: 5px; padding: 10px; margin-bottom: 10px; background-color: #f9f9f9;">
+                            <h4 style="margin: 0; color: #1f77b4;">{row.get('업체명', 'N/A')}</h4>
+                            <p style="margin: 5px 0; font-size: 0.9em;"><strong>품목:</strong> {row.get('품명', 'N/A')}</p>
+                            <p style="margin: 5px 0; font-size: 0.9em;"><strong>납기일:</strong> {row.get('납기일', 'N/A')}</p>
+                            <p style="margin: 5px 0; font-size: 0.9em;"><strong>진행상황:</strong> <span style="color: #ff6b6b;">{row.get('진행상태', 'N/A')}</span></p>
+                        </div>
+                        """, unsafe_allow_html=True)
+        else:
+            st.info("접수된 샘플 요청이 없습니다.")
+        
+        st.divider()
         
         # [검색 및 필터] - 대시보드 계산 전에 필터 적용
         col_search, col_filter1, col_filter2 = st.columns([2, 1, 1])
@@ -954,7 +841,7 @@ def main_app():
             # 진행상태 업데이트
             st.session_state.df = update_progress_status(st.session_state.df)
             save_data()
-            st.toast("✅ 데이터가 저장되었습니다!")
+            # toast는 save_data() 내부에서 표시되므로 여기서는 제거
 
         # [엑셀 다운로드 및 업로드]
         c1, c2, c3 = st.columns(3)
@@ -1226,13 +1113,9 @@ def main_app():
         
         with col2:
             st.subheader("백업 정보")
-            if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
-                st.info("📊 Google Sheets 백업 사용 중")
-                st.caption("자동 백업: 데이터 저장 시마다 실행")
-                st.caption("백업 보관: 최근 10개")
-            else:
-                st.info("💾 로컬 파일 백업 사용 중")
-                st.caption("백업 위치: 프로젝트 폴더")
+            st.info("💾 로컬 파일 백업 사용 중")
+            st.caption("백업 위치: 프로젝트 폴더")
+            st.caption("⚠️ CSV 방식은 읽기 전용입니다")
         
         st.divider()
         
@@ -1242,74 +1125,36 @@ def main_app():
         if not backups:
             st.info("백업이 없습니다.")
         else:
-            if USE_GOOGLE_SHEETS and GOOGLE_SHEETS_AVAILABLE:
-                # Google Sheets 백업 목록
-                st.write(f"**총 {len(backups)}개의 백업이 있습니다.**")
-                
-                for i, backup_sheet in enumerate(backups):
-                    backup_name = backup_sheet.title
-                    # 백업_20241215_143022 형식에서 날짜 추출
-                    try:
-                        date_str = backup_name.replace("백업_", "")
-                        if len(date_str) >= 15:
-                            year = date_str[:4]
-                            month = date_str[4:6]
-                            day = date_str[6:8]
-                            hour = date_str[9:11]
-                            minute = date_str[11:13]
-                            second = date_str[13:15]
-                            formatted_date = f"{year}-{month}-{day} {hour}:{minute}:{second}"
-                        else:
-                            formatted_date = backup_name
-                    except:
-                        formatted_date = backup_name
+            # 로컬 파일 백업 정보
+            for backup in backups:
+                with st.expander(f"📦 {backup['name']}"):
+                    st.write(f"**생성일**: {backup['date']}")
+                    st.write(f"**위치**: {DATA_FILE}, {HISTORY_FILE}")
+                    # 현재 데이터를 Excel로 다운로드
+                    df_copy = st.session_state.df.copy()
+                    date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
+                    for col in date_columns:
+                        if col in df_copy.columns:
+                            df_copy[col] = df_copy[col].apply(lambda x: str(x) if pd.notnull(x) and x is not None else "")
                     
-                    with st.expander(f"📦 {formatted_date} - {backup_name}"):
-                        col_dl, col_info = st.columns([1, 2])
-                        with col_dl:
-                            backup_data = download_backup_from_sheets(backup_name)
-                            if backup_data:
-                                st.download_button(
-                                    label="💾 Excel 파일 다운로드",
-                                    data=backup_data,
-                                    file_name=f"{backup_name}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    key=f"dl_{i}"
-                                )
-                        with col_info:
-                            st.caption(f"백업 시트: {backup_name}")
-                            st.caption(f"생성일: {formatted_date}")
-            else:
-                # 로컬 파일 백업 정보
-                for backup in backups:
-                    with st.expander(f"📦 {backup['name']}"):
-                        st.write(f"**생성일**: {backup['date']}")
-                        st.write(f"**위치**: {DATA_FILE}, {HISTORY_FILE}")
-                        # 현재 데이터를 Excel로 다운로드
-                        df_copy = st.session_state.df.copy()
-                        date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
-                        for col in date_columns:
-                            if col in df_copy.columns:
-                                df_copy[col] = df_copy[col].apply(lambda x: str(x) if pd.notnull(x) and x is not None else "")
-                        
-                        output = BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            df_copy.to_excel(writer, index=False, sheet_name='Sheet1')
-                        
-                        st.download_button(
-                            label="💾 Excel 파일 다운로드",
-                            data=output.getvalue(),
-                            file_name=f"백업_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_local"
-                        )
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_copy.to_excel(writer, index=False, sheet_name='Sheet1')
+                    
+                    st.download_button(
+                        label="💾 Excel 파일 다운로드",
+                        data=output.getvalue(),
+                        file_name=f"백업_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_local"
+                    )
         
         st.divider()
         st.subheader("백업 설정")
         st.info("""
-        **자동 백업**
-        - Google Sheets 사용 시: 데이터 저장 시마다 자동으로 백업 생성
-        - 최근 10개의 백업이 자동으로 유지됩니다
+        **데이터 저장**
+        - CSV 방식은 읽기 전용이므로 변경사항은 로컬 파일에만 저장됩니다
+        - 앱을 재시작하면 구글 폼의 최신 데이터로 다시 로드됩니다
         
         **수동 백업**
         - 위의 '수동 백업 생성' 버튼을 클릭하여 언제든지 백업을 생성할 수 있습니다

@@ -69,3 +69,5 @@ export GOOGLE_SHEETS_SPREADSHEET_ID="your-spreadsheet-id"
 - Google Sheets에 자동으로 타임스탬프가 포함된 백업 시트 생성
 - 로컬 파일도 백업으로 유지됨 (Google Sheets 저장 실패 시)
 
+
+
