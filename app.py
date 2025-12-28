@@ -17,8 +17,8 @@ DATA_FILE = "ssep_data.json"
 HISTORY_FILE = "ssep_history.json"
 
 # [중요] 구글 시트 CSV 변환 주소 (읽기 전용)
-# 사장님의 시트 ID: 1IsBdfSpLDAughGyjr2APO4_LxPWxC0Pbj0h4jTjyz5U
-SHEET_ID = "1IsBdfSpLDAughGyjr2APO4_LxPWxC0Pbj0h4jTjyz5U"
+# 구글 폼 응답 시트 ID: 12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s
+SHEET_ID = "12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s"
 SPREADSHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
 # 초기 데이터 (템플릿 구조에 맞춤)
@@ -109,7 +109,7 @@ def load_data_from_google_sheets():
                 **❌ 구글 시트 접근 권한 오류 (401 Unauthorized)**
                 
                 **해결 방법:**
-                1. 구글 시트를 열어주세요: https://docs.google.com/spreadsheets/d/1IsBdfSpLDAughGyjr2APO4_LxPWxC0Pbj0h4jTjyz5U
+                1. 구글 시트를 열어주세요: https://docs.google.com/spreadsheets/d/12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s
                 2. 우측 상단의 **"공유"** 버튼을 클릭하세요
                 3. **"링크가 있는 모든 사용자"** 또는 **"모든 사용자"**에게 **"뷰어"** 권한을 부여하세요
                 4. 설정 후 잠시 기다린 뒤 "데이터 새로고침" 버튼을 클릭하세요
@@ -131,9 +131,26 @@ def load_data_from_google_sheets():
             return None
         
         # 2. 구글 폼 헤더를 앱 내부 컬럼명으로 변경 (매핑)
-        # 폼 질문: 타임스탬프, 업체명, 담당자 성함, 연락처, 이메일, 품목명, 요청수량, 납기희망일, 요청사항 및 비고
+        # 새 폼 구조: 타임스탬프, 신청일자, 업체명 입력, 담당자 성함 입력, 연락처 입력, 이메일 입력, 품목명 입력, 요청수량 입력, 납기희망일 입력, 요청사항 및 비고 입력
+        
+        # 접수일 처리: 신청일자 우선, 없으면 타임스탬프 사용
+        if '신청일자' in df.columns:
+            df['접수일'] = df['신청일자']
+        elif '타임스탬프' in df.columns:
+            df['접수일'] = df['타임스탬프']
+        
+        # 컬럼 매핑 (모든 가능한 컬럼명을 매핑)
         rename_map = {
-            '타임스탬프': '접수일',
+            # 새 폼 구조
+            '업체명 입력': '업체명',
+            '담당자 성함 입력': '담당자',
+            '품목명 입력': '품명',
+            '요청수량 입력': '요청수량',
+            '납기희망일 입력': '납기일',
+            '요청사항 및 비고 입력': '요청사항',
+            '연락처 입력': '연락처',
+            '이메일 입력': '이메일',
+            # 기존 폼 구조 (하위 호환성)
             '담당자 성함': '담당자',
             '품목명': '품명',
             '납기희망일': '납기일',
