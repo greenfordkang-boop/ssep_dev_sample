@@ -259,6 +259,17 @@ def convert_dataframe_types(df):
 
 def load_data():
     """데이터 로드 메인 함수"""
+    # 삭제 기록 먼저 초기화 (save_data_to_local() 호출 전에 필요)
+    if 'deleted_history' not in st.session_state:
+        if os.path.exists(HISTORY_FILE):
+            try:
+                with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+                    st.session_state.deleted_history = json.load(f)
+            except:
+                st.session_state.deleted_history = []
+        else:
+            st.session_state.deleted_history = []
+    
     if 'df' not in st.session_state:
         # 1. 구글 시트에서 최신 데이터 가져오기 시도
         df = load_data_from_google_sheets()
@@ -285,17 +296,6 @@ def load_data():
             st.session_state.df = convert_dataframe_types(st.session_state.df)
             st.session_state.df = update_progress_status(st.session_state.df)
 
-    # 삭제 기록 로드
-    if 'deleted_history' not in st.session_state:
-        if os.path.exists(HISTORY_FILE):
-            try:
-                with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-                    st.session_state.deleted_history = json.load(f)
-            except:
-                st.session_state.deleted_history = []
-        else:
-            st.session_state.deleted_history = []
-
 def save_data():
     """데이터 저장 (CSV 방식은 읽기 전용이므로 로컬에만 저장)"""
     save_data_to_local()
@@ -316,8 +316,9 @@ def save_data_to_local():
     
     # deleted_history 저장
     history_data = []
-    if st.session_state.deleted_history:
-        for item in st.session_state.deleted_history:
+    deleted_history = st.session_state.get('deleted_history', [])
+    if deleted_history:
+        for item in deleted_history:
             if isinstance(item, dict):
                 clean_item = {}
                 for key, value in item.items():
@@ -810,6 +811,8 @@ def main_app():
                                     st.session_state.df = st.session_state.df.drop(index=idx)
                         
                         if deleted_items:
+                            if 'deleted_history' not in st.session_state:
+                                st.session_state.deleted_history = []
                             st.session_state.deleted_history.extend(deleted_items)
                             st.session_state.selected_rows = set()
                             save_data()
@@ -1216,7 +1219,7 @@ def main_app():
     elif menu == "🗑️ 휴지통 (삭제 내역)":
         st.header("삭제된 항목 복구")
         
-        history = st.session_state.deleted_history
+        history = st.session_state.get('deleted_history', [])
         if not history:
             st.info("휴지통이 비어있습니다.")
         else:
@@ -1238,8 +1241,9 @@ def main_app():
                         
                         # 휴지통에서 제거
                         item_key = item.get('NO') or item.get('id')
-                        st.session_state.deleted_history = [i for i in st.session_state.deleted_history 
-                                                           if (i.get('NO') or i.get('id')) != item_key]
+                        if 'deleted_history' in st.session_state:
+                            st.session_state.deleted_history = [i for i in st.session_state.deleted_history 
+                                                               if (i.get('NO') or i.get('id')) != item_key]
                         
                         save_data()
                         st.success("복구 완료!")
