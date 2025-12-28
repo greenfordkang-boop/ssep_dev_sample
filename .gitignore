@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Streamlit
+.streamlit/
+
+# 데이터 파일 (로컬 개발용)
+ssep_data.json
+ssep_history.json
+
+# Google Sheets 인증 정보 (절대 업로드하지 마세요!)
+*.json
+!package.json
+!package-lock.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 기타
+*.log
+*.bak
+
