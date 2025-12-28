@@ -417,7 +417,11 @@ def main_app():
         st.subheader("📋 접수된 샘플 요청 목록")
         if not df.empty and '업체명' in df.columns:
             # 최근 접수된 항목들을 표시 (최대 20개)
+            # 고객 필터링 적용 (관리자는 전체, 고객은 본인 회사만)
             display_df = df.copy()
+            if user['role'] != 'ADMIN' and '업체명' in display_df.columns:
+                display_df = display_df[display_df['업체명'] == user['companyName']]
+            
             if '접수일' in display_df.columns:
                 display_df = display_df.sort_values('접수일', ascending=False, na_position='last')
             display_df = display_df.head(20)
@@ -998,6 +1002,8 @@ def main_app():
             # toast는 save_data() 내부에서 표시되므로 여기서는 제거
 
         # [엑셀 다운로드 및 업로드]
+        st.divider()
+        st.subheader("📁 엑셀 파일 관리")
         c1, c2, c3 = st.columns(3)
         with c1:
             # Excel 템플릿 다운로드
@@ -1042,7 +1048,9 @@ def main_app():
         
         with c3:
             if user['role'] == 'ADMIN':
-                uploaded_file = st.file_uploader("📤 엑셀 업로드 (데이터 병합)", type=['xlsx', 'xls'])
+                st.markdown("**📤 엑셀 업로드 (예전 데이터 불러오기)**")
+                st.caption("엑셀 파일을 업로드하면 기존 데이터에 병합됩니다.")
+                uploaded_file = st.file_uploader("엑셀 파일 선택", type=['xlsx', 'xls'], label_visibility="collapsed")
                 if uploaded_file:
                     try:
                         new_data = pd.read_excel(uploaded_file)
