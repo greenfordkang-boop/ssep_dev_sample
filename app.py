@@ -213,10 +213,53 @@ def load_data_from_google_sheets():
                 st.error(f"**❌ 구글 시트 데이터 로드 실패**: {error_msg}\n\n로컬 파일을 사용합니다.")
             return None
         
+        # CSV 로드 후 데이터 확인
         if df is None or df.empty:
             return None
+        
+        # CSV에서 로드한 데이터 처리
+        # 구글 폼 헤더를 앱 내부 컬럼명으로 변경 (매핑)
+        # 접수일 처리: 신청일자 우선, 없으면 타임스탬프 사용
+        if '신청일자' in df.columns:
+            df['접수일'] = df['신청일자']
+        elif '타임스탬프' in df.columns:
+            df['접수일'] = df['타임스탬프']
+        
+        # 컬럼 매핑 (모든 가능한 컬럼명을 매핑)
+        rename_map = {
+            # 새 폼 구조
+            '업체명 입력': '업체명',
+            '담당자 성함 입력': '담당자',
+            '품목명 입력': '품명',
+            '요청수량 입력': '요청수량',
+            '납기희망일 입력': '납기일',
+            '요청사항 및 비고 입력': '요청사항',
+            '연락처 입력': '연락처',
+            '이메일 입력': '이메일',
+            # 기존 폼 구조 (하위 호환성)
+            '담당자 성함': '담당자',
+            '품목명': '품명',
+            '납기희망일': '납기일',
+            '요청사항 및 비고': '요청사항'
+        }
+        df = df.rename(columns=rename_map)
+
+        # 날짜 형식 정리 (타임스탬프 2024. 12. 28... -> 2024-12-28)
+        if '접수일' in df.columns:
+            df['접수일'] = pd.to_datetime(df['접수일'], errors='coerce').dt.date
+        
+        # 없는 컬럼 채우기 (앱 작동을 위해 필수)
+        required_cols = ['NO', '부서', '차종', '품번', '출하장소', '자재준비', '샘플 완료일', '출하일', '비고', '샘플단가', '샘플금액', '운송편', '도면접수일', '자재 요청일']
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = ""  # 빈 값으로 생성
+
+        # NO(주문번호) 자동 생성 (없으면 인덱스 기반으로 생성)
+        # 구글 폼에는 NO가 없으므로 1000번부터 시작해서 자동으로 붙임
+        if 'NO' not in df.columns or df['NO'].isnull().all() or (df['NO'] == "").all():
+            df['NO'] = range(1001, 1001 + len(df))
     
-    # 데이터가 있는 경우 처리
+    # 데이터가 있는 경우 처리 (gspread로 로드한 경우)
     if df is not None and not df.empty:
         # 2. 구글 폼 헤더를 앱 내부 컬럼명으로 변경 (매핑)
         # 새 폼 구조: 타임스탬프, 신청일자, 업체명 입력, 담당자 성함 입력, 연락처 입력, 이메일 입력, 품목명 입력, 요청수량 입력, 납기희망일 입력, 요청사항 및 비고 입력
@@ -261,6 +304,9 @@ def load_data_from_google_sheets():
         if 'NO' not in df.columns or df['NO'].isnull().all() or (df['NO'] == "").all():
             df['NO'] = range(1001, 1001 + len(df))
     
+    # 함수 마지막에 df 반환 (없으면 None)
+    if df is None or df.empty:
+        return None
     return df
 
 def create_backup_manual():
