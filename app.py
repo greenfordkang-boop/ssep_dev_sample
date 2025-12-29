@@ -8,6 +8,16 @@ from io import BytesIO
 import urllib.request
 import urllib.error
 
+# gspread 관련 import (선택적)
+try:
+    import gspread
+    from google.oauth2 import service_account
+    USE_GSPREAD = True
+except ImportError:
+    USE_GSPREAD = False
+    gspread = None
+    service_account = None
+
 # -----------------------------------------------------------------------------
 # 1. 초기 설정 및 상수
 # -----------------------------------------------------------------------------
@@ -16,10 +26,42 @@ st.set_page_config(page_title="신성EP 통합 샘플 관리 대장", layout="wi
 DATA_FILE = "ssep_data.json"
 HISTORY_FILE = "ssep_history.json"
 
-# [중요] 구글 시트 CSV 변환 주소 (읽기 전용)
+# [중요] 구글 시트 설정
 # 구글 폼 응답 시트 ID: 12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s
 SHEET_ID = "12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s"
 SPREADSHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+
+# gspread 클라이언트 초기화 (선택적)
+@st.cache_resource
+def init_gspread_client():
+    """gspread 클라이언트 초기화"""
+    if not USE_GSPREAD:
+        return None
+    
+    try:
+        # Streamlit secrets에서 서비스 계정 정보 가져오기
+        # [connections.gsheets] 형식 우선, 없으면 [gcp_service_account] 형식 사용
+        credentials_info = None
+        
+        if 'connections' in st.secrets and 'gsheets' in st.secrets['connections']:
+            # st.connection 방식: [connections.gsheets]
+            credentials_info = dict(st.secrets['connections']['gsheets'])
+        elif 'gcp_service_account' in st.secrets:
+            # 기존 방식: [gcp_service_account] (하위 호환성)
+            credentials_info = dict(st.secrets['gcp_service_account'])
+        
+        if credentials_info:
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+            )
+            gc = gspread.authorize(credentials)
+            return gc
+        else:
+            return None
+    except Exception as e:
+        st.warning(f"gspread 초기화 실패: {e}")
+        return None
 
 # 초기 데이터 (템플릿 구조에 맞춤)
 INITIAL_DATA = [
@@ -96,14 +138,38 @@ def update_progress_status(df):
     return df
 
 def load_data_from_google_sheets():
-    """구글 시트(CSV)에서 데이터를 읽어와 앱 형식에 맞게 변환"""
-    try:
-        # 1. CSV 데이터 읽기 (에러 나는 줄은 건너뜀)
-        # urllib을 사용하여 더 명확한 에러 처리
+    """구글 시트에서 데이터를 읽어와 앱 형식에 맞게 변환 (gspread 우선, CSV fallback)"""
+    df = None
+    
+    # 1. gspread를 사용한 읽기 시도
+    if USE_GSPREAD:
+        gc = init_gspread_client()
+        if gc:
+            try:
+                spreadsheet = gc.open_by_key(SHEET_ID)
+                # 첫 번째 워크시트 가져오기
+                worksheet = spreadsheet.sheet1
+                # 모든 데이터 가져오기
+                records = worksheet.get_all_records()
+                if records:
+                    df = pd.DataFrame(records)
+                else:
+                    # 헤더만 있는 경우
+                    headers = worksheet.row_values(1)
+                    df = pd.DataFrame(columns=headers)
+            except Exception as e:
+                st.warning(f"gspread로 데이터 로드 실패, CSV 방식으로 시도: {e}")
+                df = None
+    
+    # 2. gspread 실패 시 CSV 방식으로 fallback
+    if df is None or df.empty:
         try:
-            with urllib.request.urlopen(SPREADSHEET_URL, timeout=10) as response:
-                df = pd.read_csv(response, on_bad_lines='skip', encoding='utf-8')
-        except urllib.error.HTTPError as e:
+            # CSV 데이터 읽기 (에러 나는 줄은 건너뜀)
+            # urllib을 사용하여 더 명확한 에러 처리
+            try:
+                with urllib.request.urlopen(SPREADSHEET_URL, timeout=10) as response:
+                    df = pd.read_csv(response, on_bad_lines='skip', encoding='utf-8')
+            except urllib.error.HTTPError as e:
             if e.code == 401:
                 st.error("""
                 **❌ 구글 시트 접근 권한 오류 (401 Unauthorized)**
@@ -203,7 +269,7 @@ def create_backup_manual():
 def get_backup_list():
     """백업 목록 가져오기"""
     backups = []
-    if os.path.exists(DATA_FILE):
+        if os.path.exists(DATA_FILE):
         file_time = datetime.datetime.fromtimestamp(os.path.getmtime(DATA_FILE))
         backups.append({
             "name": "로컬 파일 백업",
@@ -234,12 +300,12 @@ def convert_dataframe_types(df):
     if df.empty:
         return df
     
-    # 날짜 컬럼을 datetime 타입으로 변환
+                    # 날짜 컬럼을 datetime 타입으로 변환
     date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
-    for col in date_columns:
+                    for col in date_columns:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors='coerce').dt.date
-            # 빈 날짜는 None으로 처리
+                            # 빈 날짜는 None으로 처리
             df[col] = df[col].where(pd.notnull(df[col]), None)
     
     # 숫자 컬럼을 숫자 타입으로 변환
@@ -330,10 +396,72 @@ def load_data():
                 # 삭제된 항목이 필터링되었음을 확인
                 save_data_to_local()  # 필터링된 데이터 저장
 
+def save_data_to_google_sheets():
+    """구글 시트에 데이터 저장 (gspread 사용)"""
+    if not USE_GSPREAD:
+        return False
+    
+    gc = init_gspread_client()
+    if not gc:
+        return False
+    
+    try:
+        spreadsheet = gc.open_by_key(SHEET_ID)
+        worksheet = spreadsheet.sheet1
+        
+        # 데이터프레임 준비
+        df_copy = st.session_state.df.copy()
+        
+        # 날짜를 문자열로 변환
+        date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
+        for col in date_columns:
+            if col in df_copy.columns:
+                df_copy[col] = df_copy[col].apply(lambda x: str(x) if pd.notnull(x) and x is not None else "")
+        
+        # None 값을 빈 문자열로 변환
+        df_copy = df_copy.fillna("")
+        
+        # 컬럼 순서 정의
+        column_order = ['NO', '접수일', '업체명', '부서', '담당자', '차종', '품번', '품명', '출하장소', 
+                       '요청수량', '납기일', '요청사항', '도면접수일', '자재 요청일', '자재준비', 
+                       '샘플 완료일', '출하일', '운송편', '비고', '샘플단가', '샘플금액', '진행상태']
+        
+        # 존재하는 컬럼만 선택
+        existing_cols = [col for col in column_order if col in df_copy.columns]
+        other_cols = [col for col in df_copy.columns if col not in existing_cols]
+        df_copy = df_copy[existing_cols + other_cols]
+        
+        # 헤더와 데이터 준비
+        headers = df_copy.columns.tolist()
+        values = df_copy.values.tolist()
+        
+        # 시트 전체 지우기
+        worksheet.clear()
+        
+        # 헤더 쓰기
+        worksheet.append_row(headers)
+        
+        # 데이터 쓰기
+        if values:
+            worksheet.append_rows(values)
+        
+        return True
+    except Exception as e:
+        st.error(f"구글 시트 저장 실패: {e}")
+        return False
+
 def save_data():
-    """데이터 저장 (CSV 방식은 읽기 전용이므로 로컬에만 저장)"""
+    """데이터 저장 (구글 시트 + 로컬 파일)"""
+    # 1. 구글 시트에 저장 시도 (gspread 사용)
+    google_success = save_data_to_google_sheets()
+    
+    # 2. 로컬 파일에도 저장 (백업)
     save_data_to_local()
-    st.toast("⚠️ 주의: 구글 시트(CSV) 방식은 '읽기 전용'입니다. 변경사항은 앱이 켜져있는 동안만 유지됩니다.")
+    
+    if google_success:
+        st.toast("✅ 데이터가 구글 시트와 로컬 파일에 저장되었습니다.")
+    else:
+        st.toast("⚠️ 구글 시트 저장 실패. 로컬 파일에만 저장되었습니다.")
 
 def save_data_to_local():
     """로컬 파일에 데이터 저장 (백업용)"""
@@ -425,7 +553,7 @@ def main_app():
             if 'df' in st.session_state:
                 del st.session_state.df
             st.rerun()
-            
+        
         st.divider()
         if st.button("로그아웃"):
             del st.session_state.user
@@ -485,12 +613,26 @@ def main_app():
                     '접수': '#6c757d'
                 }.get(진행상태, '#6c757d')
                 
+                # 날짜 형식 안전하게 변환
+                def safe_date_format(date_value):
+                    """날짜 값을 안전하게 문자열로 변환"""
+                    if pd.isna(date_value) or date_value is None:
+                        return 'N/A'
+                    if isinstance(date_value, str):
+                        return date_value
+                    if isinstance(date_value, (datetime.date, datetime.datetime)):
+                        try:
+                            return date_value.strftime('%Y-%m-%d')
+                        except:
+                            return str(date_value)
+                    return str(date_value)
+                
                 list_data.append({
                     'NO': item_no,
-                    '접수일': 접수일 if isinstance(접수일, str) else (접수일.strftime('%Y-%m-%d') if hasattr(접수일, 'strftime') else str(접수일)),
+                    '접수일': safe_date_format(접수일),
                     '업체명': 업체명,
                     '품명': 품명,
-                    '납기일': 납기일 if isinstance(납기일, str) else (납기일.strftime('%Y-%m-%d') if hasattr(납기일, 'strftime') else str(납기일)),
+                    '납기일': safe_date_format(납기일),
                     '진행상태': 진행상태
                 })
             
@@ -516,8 +658,8 @@ def main_app():
                     st.write("**진행상태**")
                 with header_cols[7]:
                     st.write("**작업**")
-                st.divider()
-                
+        st.divider()
+        
                 # 각 행 표시
                 for i, row in list_df.iterrows():
                     cols = st.columns([0.5, 1.2, 1.5, 2.5, 2, 1.2, 1.2, 1.5])
@@ -562,14 +704,14 @@ def main_app():
         with col_filter1:
             # CUSTOMER는 본인 회사만 볼 수 있으므로 업체 필터 비활성화
             if user['role'] == 'ADMIN':
-                company_filter = st.selectbox("업체 필터", ["전체"] + list(df['업체명'].unique()) if not df.empty and '업체명' in df.columns else [])
+            company_filter = st.selectbox("업체 필터", ["전체"] + list(df['업체명'].unique()) if not df.empty and '업체명' in df.columns else [])
             else:
                 # CUSTOMER는 본인 회사만 표시
                 company_filter = "전체"
                 st.info(f"📋 {user['companyName']} 데이터만 표시됩니다")
         with col_filter2:
             completion_filter = st.selectbox("완료 상태", ["전체", "미완료", "완료"])
-        
+
         # [컬럼별 필터] - 제목열 필터 기능 (필터링 로직 전에 UI 배치)
         with st.expander("📋 컬럼별 필터", expanded=False):
             col_filter_col1, col_filter_col2, col_filter_col3, col_filter_col4 = st.columns(4)
@@ -940,7 +1082,7 @@ def main_app():
         
         # 필터링된 데이터프레임의 진행상태도 업데이트 (원본과 동기화)
         filtered_df = update_progress_status(filtered_df)
-        
+            
         # 컬럼 순서 정의 (이미지 템플릿 순서)
         column_order = ['NO', '접수일', '업체명', '부서', '담당자', '차종', '품번', '품명', '출하장소', 
                        '요청수량', '납기일', '요청사항', '도면접수일', '자재 요청일', '자재준비', 
@@ -1226,31 +1368,31 @@ def main_app():
                 if not company_name or not department or not contact or not car_model or not part_no or not part_name or not requirements:
                     st.error("❌ 필수 항목을 모두 입력해주세요.")
                 else:
-                    # NO 생성 (기존 최대값 + 1 또는 타임스탬프 기반)
-                    if not st.session_state.df.empty and 'NO' in st.session_state.df.columns:
-                        max_no = st.session_state.df['NO'].max()
-                        new_no = int(max_no) + 1 if pd.notnull(max_no) else int(datetime.datetime.now().timestamp())
-                    else:
-                        new_no = int(datetime.datetime.now().timestamp())
-                    
+                # NO 생성 (기존 최대값 + 1 또는 타임스탬프 기반)
+                if not st.session_state.df.empty and 'NO' in st.session_state.df.columns:
+                    max_no = st.session_state.df['NO'].max()
+                    new_no = int(max_no) + 1 if pd.notnull(max_no) else int(datetime.datetime.now().timestamp())
+                else:
+                    new_no = int(datetime.datetime.now().timestamp())
+                
                     # 접수일은 오늘 날짜로 자동 설정
                     req_date = datetime.date.today()
-                    
-                    new_entry = {
-                        "NO": new_no,
-                        "접수일": req_date,
-                        "업체명": company_name,
-                        "부서": department,
-                        "담당자": contact,
-                        "차종": car_model,
-                        "품번": part_no,
-                        "품명": part_name,
+                
+                new_entry = {
+                    "NO": new_no,
+                    "접수일": req_date,
+                    "업체명": company_name,
+                    "부서": department,
+                    "담당자": contact,
+                    "차종": car_model,
+                    "품번": part_no,
+                    "품명": part_name,
                         "출하장소": "",  # 관리자가 입력
-                        "요청수량": qty,
+                    "요청수량": qty,
                         "납기일": due_date,
                         "샘플단가": 0,  # 관리자가 입력
                         "샘플금액": 0,  # 관리자가 입력
-                        "요청사항": requirements,
+                    "요청사항": requirements,
                         "도면접수일": None,  # 관리자가 입력
                         "자재 요청일": None,  # 관리자가 입력
                         "자재준비": "",  # 관리자가 입력
@@ -1258,16 +1400,16 @@ def main_app():
                         "출하일": None,  # 관리자가 입력
                         "운송편": "",  # 관리자가 입력
                         "비고": ""  # 관리자가 입력
-                    }
-                    
-                    # DataFrame 상단에 추가
-                    st.session_state.df = pd.concat([pd.DataFrame([new_entry]), st.session_state.df], ignore_index=True)
+                }
+                
+                # DataFrame 상단에 추가
+                st.session_state.df = pd.concat([pd.DataFrame([new_entry]), st.session_state.df], ignore_index=True)
                     # 진행상태 업데이트
                     st.session_state.df = update_progress_status(st.session_state.df)
-                    save_data()
+                save_data()
                     st.success("✅ 의뢰가 성공적으로 등록되었습니다! 관리자가 나머지 정보를 입력합니다.")
                     time.sleep(1.5)
-                    st.rerun()
+                st.rerun()
 
     # --- 3. 휴지통 (DeletionHistoryPanel.tsx 대응) ---
     elif menu == "🗑️ 휴지통 (삭제 내역)":
@@ -1296,8 +1438,8 @@ def main_app():
                         # 휴지통에서 제거
                         item_key = item.get('NO') or item.get('id')
                         if 'deleted_history' in st.session_state:
-                            st.session_state.deleted_history = [i for i in st.session_state.deleted_history 
-                                                               if (i.get('NO') or i.get('id')) != item_key]
+                        st.session_state.deleted_history = [i for i in st.session_state.deleted_history 
+                                                           if (i.get('NO') or i.get('id')) != item_key]
                         
                         save_data()
                         st.success("복구 완료!")
