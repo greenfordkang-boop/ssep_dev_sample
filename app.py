@@ -49,7 +49,37 @@ def init_gspread_client():
 
         # private_key의 \n 문자가 실제 줄바꿈으로 처리되도록 보정
         if "private_key" in credentials_info:
-            credentials_info["private_key"] = credentials_info["private_key"].replace("\\n", "\n")
+            private_key = credentials_info["private_key"]
+            
+            # 문자열이 아닌 경우 문자열로 변환
+            if not isinstance(private_key, str):
+                private_key = str(private_key)
+            
+            # 여러 가지 경우를 처리
+            # 1. 이스케이프된 \n을 실제 줄바꿈으로 변환
+            private_key = private_key.replace("\\n", "\n")
+            # 2. 리터럴 문자열 "\\n"도 처리
+            private_key = private_key.replace("\\\\n", "\n")
+            # 3. 공백이나 다른 문자로 구분된 경우 처리
+            if "-----BEGIN PRIVATE KEY-----" in private_key and "-----END PRIVATE KEY-----" in private_key:
+                # BEGIN과 END 사이의 내용을 추출
+                begin_idx = private_key.find("-----BEGIN PRIVATE KEY-----")
+                end_idx = private_key.find("-----END PRIVATE KEY-----") + len("-----END PRIVATE KEY-----")
+                key_content = private_key[begin_idx:end_idx]
+                # BEGIN과 END 사이의 공백/줄바꿈 정리
+                lines = key_content.split("\n")
+                cleaned_lines = []
+                for line in lines:
+                    line = line.strip()
+                    if line and not line.startswith("-----"):
+                        cleaned_lines.append(line)
+                    elif line.startswith("-----"):
+                        cleaned_lines.append(line)
+                # 올바른 PEM 형식으로 재구성
+                if len(cleaned_lines) >= 3:
+                    private_key = f"{cleaned_lines[0]}\n" + "\n".join(cleaned_lines[1:-1]) + f"\n{cleaned_lines[-1]}\n"
+            
+            credentials_info["private_key"] = private_key
 
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
