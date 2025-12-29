@@ -353,10 +353,8 @@ def load_data_from_google_sheets():
             # 최대값 + 1부터 시작
             df['NO'] = range(max_existing_no + 1, max_existing_no + 1 + len(df))
         
-        # '열'로 끝나는 컬럼 제거 (관리대장 시트의 요약 컬럼)
-        columns_to_remove = [col for col in df.columns if str(col).endswith('열')]
-        if columns_to_remove:
-            df = df.drop(columns=columns_to_remove)
+        # 데이터 클리닝 적용 (불필요한 컬럼 및 텅 빈 행 제거)
+        df = clean_dataframe(df)
     
     return df if df is not None and not df.empty else None
 
@@ -393,6 +391,63 @@ def download_backup_from_sheets(backup_sheet_name):
     except Exception as e:
         st.error(f"백업 다운로드 오류: {e}")
         return None
+
+def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """데이터프레임 클리닝: 불필요한 컬럼과 행 제거"""
+    if df.empty:
+        return df
+    
+    # 1) 컬럼 클린업
+    # - 'Unnamed'로 시작하는 컬럼 삭제
+    columns_to_remove = [col for col in df.columns if str(col).startswith('Unnamed')]
+    # - '열'로 끝나는 컬럼 삭제 (예: 1열, 2열 등)
+    columns_to_remove.extend([col for col in df.columns if str(col).endswith('열')])
+    
+    if columns_to_remove:
+        df = df.drop(columns=columns_to_remove)
+    
+    # 컬럼명 양쪽 공백 제거
+    df.columns = df.columns.str.strip()
+    
+    # 2) 핵심 컬럼 목록 정의
+    key_cols = ['NO', '접수일', '업체명', '부서', '담당자', '차종', '품번', '품명',
+                '출하장소', '요청수량', '납기일', '요청사항',
+                '도면접수일', '자재 요청일', '자재준비',
+                '샘플 완료일', '출하일', '운송편', '비고',
+                '샘플단가', '샘플금액', '진행상태']
+    
+    # 3) 핵심 컬럼이 하나도 채워져 있지 않은 "텅 빈 행" 제거
+    # NO만 있고 나머지 핵심 컬럼이 전부 NaN/빈값인 행은 제거
+    if not df.empty:
+        # 존재하는 핵심 컬럼만 확인
+        existing_key_cols = [col for col in key_cols if col in df.columns]
+        
+        if existing_key_cols:
+            # 각 행에 대해 핵심 컬럼 중 하나라도 값이 있는지 확인
+            # NO는 제외 (NO만 있는 행은 제거 대상)
+            key_cols_except_no = [col for col in existing_key_cols if col != 'NO']
+            
+            if key_cols_except_no:
+                # 각 행의 핵심 컬럼 값 확인 (NaN, None, 빈 문자열 제외)
+                def has_any_value(row):
+                    for col in key_cols_except_no:
+                        if col in row.index:
+                            val = row[col]
+                            # NaN, None 체크
+                            if pd.notnull(val) and val is not None:
+                                # 문자열로 변환하여 빈 값 체크
+                                val_str = str(val).strip()
+                                if val_str != "" and val_str.lower() not in ['nan', 'none', 'n/a', 'na', 'null']:
+                                    return True
+                    return False
+                
+                # 핵심 컬럼에 값이 있는 행만 유지
+                mask = df.apply(has_any_value, axis=1)
+                df = df[mask].copy()
+                # 인덱스 재설정
+                df = df.reset_index(drop=True)
+    
+    return df
 
 def convert_dataframe_types(df):
     """데이터프레임의 타입 변환 (공통 함수)"""
@@ -454,6 +509,8 @@ def load_data():
         df = load_data_from_google_sheets()
         
         if df is not None and not df.empty:
+            # 데이터 클리닝 (이미 load_data_from_google_sheets 내부에서 적용되지만, 추가 안전장치)
+            df = clean_dataframe(df)
             st.session_state.df = convert_dataframe_types(df)
             st.session_state.df = update_progress_status(st.session_state.df)
             # 삭제된 NO 필터링
@@ -466,8 +523,10 @@ def load_data():
             try:
                 with open(DATA_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    st.session_state.df = pd.DataFrame(data)
-                    st.session_state.df = convert_dataframe_types(st.session_state.df)
+                    df = pd.DataFrame(data)
+                    # 데이터 클리닝 적용
+                    df = clean_dataframe(df)
+                    st.session_state.df = convert_dataframe_types(df)
                     st.session_state.df = update_progress_status(st.session_state.df)
                     # 삭제된 NO 필터링
                     if 'NO' in st.session_state.df.columns and deleted_nos:
