@@ -55,31 +55,39 @@ def init_gspread_client():
             if not isinstance(private_key, str):
                 private_key = str(private_key)
             
-            # 여러 가지 경우를 처리
-            # 1. 이스케이프된 \n을 실제 줄바꿈으로 변환
-            private_key = private_key.replace("\\n", "\n")
-            # 2. 리터럴 문자열 "\\n"도 처리
-            private_key = private_key.replace("\\\\n", "\n")
-            # 3. 공백이나 다른 문자로 구분된 경우 처리
-            if "-----BEGIN PRIVATE KEY-----" in private_key and "-----END PRIVATE KEY-----" in private_key:
-                # BEGIN과 END 사이의 내용을 추출
-                begin_idx = private_key.find("-----BEGIN PRIVATE KEY-----")
-                end_idx = private_key.find("-----END PRIVATE KEY-----") + len("-----END PRIVATE KEY-----")
-                key_content = private_key[begin_idx:end_idx]
-                # BEGIN과 END 사이의 공백/줄바꿈 정리
-                lines = key_content.split("\n")
-                cleaned_lines = []
-                for line in lines:
-                    line = line.strip()
-                    if line and not line.startswith("-----"):
-                        cleaned_lines.append(line)
-                    elif line.startswith("-----"):
-                        cleaned_lines.append(line)
-                # 올바른 PEM 형식으로 재구성
-                if len(cleaned_lines) >= 3:
-                    private_key = f"{cleaned_lines[0]}\n" + "\n".join(cleaned_lines[1:-1]) + f"\n{cleaned_lines[-1]}\n"
+            # 이스케이프된 \n을 실제 줄바꿈으로 변환 (여러 번 반복하여 모든 경우 처리)
+            while "\\n" in private_key:
+                private_key = private_key.replace("\\n", "\n")
             
-            credentials_info["private_key"] = private_key
+            # PEM 형식 검증
+            if "-----BEGIN PRIVATE KEY-----" not in private_key or "-----END PRIVATE KEY-----" not in private_key:
+                st.error("❌ private_key가 올바른 PEM 형식이 아닙니다. BEGIN/END 마커를 확인하세요.")
+                return None
+            
+            # BEGIN과 END 마커 사이의 내용만 추출하여 정리
+            begin_marker = "-----BEGIN PRIVATE KEY-----"
+            end_marker = "-----END PRIVATE KEY-----"
+            
+            begin_idx = private_key.find(begin_marker)
+            end_idx = private_key.find(end_marker)
+            
+            if begin_idx == -1 or end_idx == -1:
+                st.error("❌ private_key의 BEGIN/END 마커를 찾을 수 없습니다.")
+                return None
+            
+            # 마커와 키 내용 추출
+            key_content = private_key[begin_idx + len(begin_marker):end_idx].strip()
+            
+            # 키 내용에서 공백과 줄바꿈 정리 (base64 문자열만 남김)
+            key_content = "".join(key_content.split())
+            
+            # 올바른 PEM 형식으로 재구성 (64자마다 줄바꿈)
+            formatted_key = begin_marker + "\n"
+            for i in range(0, len(key_content), 64):
+                formatted_key += key_content[i:i+64] + "\n"
+            formatted_key += end_marker + "\n"
+            
+            credentials_info["private_key"] = formatted_key
 
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
@@ -89,7 +97,27 @@ def init_gspread_client():
         creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=scopes)
         return gspread.authorize(creds)
     except Exception as e:
-        st.warning(f"gspread 초기화 실패: {e}")
+        error_msg = str(e)
+        if "ASN" in error_msg or "TagSet" in error_msg:
+            st.error("""
+            ❌ **private_key 포맷 오류**
+            
+            **해결 방법:**
+            1. Streamlit Cloud의 Secrets 설정을 확인하세요
+            2. `private_key`는 다음과 같은 형식이어야 합니다:
+            
+            ```toml
+            [connections.gsheets]
+            private_key = \"\"\"-----BEGIN PRIVATE KEY-----
+            (실제 키 내용 전체 - 줄바꿈 포함)
+            -----END PRIVATE KEY-----\"\"\"
+            ```
+            
+            3. JSON 파일에서 `private_key` 값을 그대로 복사하세요
+            4. 세 개의 큰따옴표(`\"\"\"`)로 감싸야 합니다
+            """)
+        else:
+            st.warning(f"gspread 초기화 실패: {e}")
         return None
 
 # 초기 데이터 (템플릿 구조에 맞춤)
@@ -178,14 +206,50 @@ def load_data_from_google_sheets():
                 spreadsheet = gc.open_by_key(SHEET_ID)
                 # 첫 번째 워크시트 가져오기
                 worksheet = spreadsheet.sheet1
-                # 모든 데이터 가져오기
-                records = worksheet.get_all_records()
-                if records:
-                    df = pd.DataFrame(records)
+                
+                # 헤더 중복 문제를 해결하기 위해 get_all_values() 사용
+                all_values = worksheet.get_all_values()
+                
+                if len(all_values) > 0:
+                    # 첫 번째 행을 헤더로 사용
+                    headers = all_values[0]
+                    
+                    # 중복된 헤더 처리 (빈 문자열이나 중복된 이름 처리)
+                    seen = {}
+                    unique_headers = []
+                    for i, header in enumerate(headers):
+                        if not header or header.strip() == "":
+                            # 빈 헤더는 인덱스로 대체
+                            header = f"Unnamed_{i}"
+                        elif header in seen:
+                            # 중복된 헤더는 번호 추가
+                            seen[header] += 1
+                            header = f"{header}_{seen[header]}"
+                        else:
+                            seen[header] = 0
+                        unique_headers.append(header)
+                    
+                    # 데이터 행 처리
+                    if len(all_values) > 1:
+                        data_rows = all_values[1:]
+                        # 헤더 수에 맞게 데이터 행 정리
+                        processed_rows = []
+                        for row in data_rows:
+                            # 헤더 수만큼만 사용 (나머지는 무시)
+                            processed_row = row[:len(unique_headers)]
+                            # 부족한 경우 빈 문자열로 채움
+                            while len(processed_row) < len(unique_headers):
+                                processed_row.append("")
+                            processed_rows.append(processed_row)
+                        
+                        df = pd.DataFrame(processed_rows, columns=unique_headers)
+                    else:
+                        # 헤더만 있는 경우
+                        df = pd.DataFrame(columns=unique_headers)
                 else:
-                    # 헤더만 있는 경우
-                    headers = worksheet.row_values(1)
-                    df = pd.DataFrame(columns=headers)
+                    # 빈 시트
+                    df = pd.DataFrame()
+                    
             except Exception as e:
                 st.warning(f"gspread로 데이터 로드 실패, CSV 방식으로 시도: {e}")
                 df = None
