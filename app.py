@@ -5,8 +5,6 @@ import time
 import json
 import os
 from io import BytesIO
-import urllib.request
-import urllib.error
 
 # gspread 관련 import (선택적)
 try:
@@ -199,112 +197,65 @@ def update_progress_status(df):
     return df
 
 def load_data_from_google_sheets():
-    """구글 시트에서 데이터를 읽어와 앱 형식에 맞게 변환 (gspread 우선, CSV fallback)"""
+    """구글 시트에서 데이터를 읽어와 앱 형식에 맞게 변환 (gspread만 사용)"""
     df = None
     
-    # 1. gspread를 사용한 읽기 시도 (구글폼 응답 시트)
-    if USE_GSPREAD:
-        gc = init_gspread_client()
-        if gc:
-            try:
-                spreadsheet = gc.open_by_key(SHEET_ID)
-                worksheet = spreadsheet.sheet1
-                
-                # 헤더 중복 문제를 해결하기 위해 get_all_values() 사용
-                all_values = worksheet.get_all_values()
-                
-                if len(all_values) > 0:
-                    # 첫 번째 행을 헤더로 사용
-                    headers = all_values[0]
-                    
-                    # 중복된 헤더 처리 (빈 문자열이나 중복된 이름 처리)
-                    seen = {}
-                    unique_headers = []
-                    for i, header in enumerate(headers):
-                        header_str = str(header).strip() if header else ""
-                        if not header_str:
-                            header_str = f"Unnamed_{i}"
-                        elif header_str in seen:
-                            seen[header_str] += 1
-                            header_str = f"{header_str}_{seen[header_str]}"
-                        else:
-                            seen[header_str] = 0
-                        unique_headers.append(header_str)
-                    
-                    # 데이터 행 처리
-                    if len(all_values) > 1:
-                        data_rows = all_values[1:]
-                        processed_rows = []
-                        for row in data_rows:
-                            processed_row = row[:len(unique_headers)]
-                            while len(processed_row) < len(unique_headers):
-                                processed_row.append("")
-                            processed_rows.append(processed_row)
-                        
-                        df = pd.DataFrame(processed_rows, columns=unique_headers)
-                    else:
-                        df = pd.DataFrame(columns=unique_headers)
-                else:
-                    df = pd.DataFrame()
-                    
-            except Exception as e:
-                st.warning(f"gspread로 데이터 로드 실패, CSV 방식으로 시도: {e}")
-                df = None
+    # gspread를 사용한 읽기 시도 (구글폼 응답 시트)
+    if not USE_GSPREAD:
+        st.warning("gspread가 설치되지 않았습니다. 로컬 파일을 사용합니다.")
+        return None
     
-    # 2. gspread 실패 시 CSV 방식으로 fallback
-    if df is None or df.empty:
-        try:
-            try:
-                with urllib.request.urlopen(SPREADSHEET_URL, timeout=10) as response:
-                    df = pd.read_csv(response, on_bad_lines='skip', encoding='utf-8')
-            except urllib.error.HTTPError as e:
-                if e.code == 401:
-                    st.error(f"""
-                    **❌ 구글 시트 접근 권한 오류 (401 Unauthorized)**
-                    
-                    **해결 방법:**
-                    1. 구글 시트를 열어주세요: https://docs.google.com/spreadsheets/d/{SHEET_ID}
-                    2. 우측 상단의 **"공유"** 버튼을 클릭하세요
-                    3. **"링크가 있는 모든 사용자"** 또는 **"모든 사용자"**에게 **"뷰어"** 권한을 부여하세요
-                    4. 설정 후 잠시 기다린 뒤 "데이터 새로고침" 버튼을 클릭하세요
-                    
-                    ⚠️ 시트가 비공개로 설정되어 있으면 CSV export가 작동하지 않습니다.
-                    """)
-                    return None
-                elif e.code == 403:
-                    st.error("""
-                    **❌ 구글 시트 접근 거부 (403 Forbidden)**
-                    
-                    시트에 대한 접근 권한이 없습니다. 시트 소유자에게 접근 권한을 요청하세요.
-                    """)
-                    return None
-                else:
-                    raise e
-        except urllib.error.URLError as e:
-            st.error(f"**❌ 네트워크 오류**: 구글 시트에 연결할 수 없습니다. 인터넷 연결을 확인하세요.\n\n오류: {e}")
-            return None
-        except Exception as e:
-            error_msg = str(e)
-            if "401" in error_msg or "Unauthorized" in error_msg:
-                st.error(f"""
-                **❌ 구글 시트 접근 권한 오류 (401 Unauthorized)**
-                
-                **해결 방법:**
-                1. 구글 시트를 열어주세요: https://docs.google.com/spreadsheets/d/{SHEET_ID}
-                2. 우측 상단의 **"공유"** 버튼을 클릭하세요
-                3. **"링크가 있는 모든 사용자"** 또는 **"모든 사용자"**에게 **"뷰어"** 권한을 부여하세요
-                4. 설정 후 잠시 기다린 뒤 "데이터 새로고침" 버튼을 클릭하세요
-                
-                ⚠️ 시트가 비공개로 설정되어 있으면 CSV export가 작동하지 않습니다.
-                """)
-            else:
-                st.error(f"**❌ 구글 시트 데이터 로드 실패**: {error_msg}\n\n로컬 파일을 사용합니다.")
-            return None
+    gc = init_gspread_client()
+    if not gc:
+        st.warning("gspread 클라이언트 초기화 실패. 로컬 파일을 사용합니다.")
+        return None
+    
+    try:
+        spreadsheet = gc.open_by_key(SHEET_ID)
+        worksheet = spreadsheet.sheet1
         
-        if df is None or df.empty:
-            return None
+        # 헤더 중복 문제를 해결하기 위해 get_all_values() 사용
+        all_values = worksheet.get_all_values()
+        
+        if len(all_values) > 0:
+            # 첫 번째 행을 헤더로 사용
+            headers = all_values[0]
+            
+            # 중복된 헤더 처리 (빈 문자열이나 중복된 이름 처리)
+            seen = {}
+            unique_headers = []
+            for i, header in enumerate(headers):
+                header_str = str(header).strip() if header else ""
+                if not header_str:
+                    header_str = f"Unnamed_{i}"
+                elif header_str in seen:
+                    seen[header_str] += 1
+                    header_str = f"{header_str}_{seen[header_str]}"
+                else:
+                    seen[header_str] = 0
+                unique_headers.append(header_str)
+            
+            # 데이터 행 처리
+            if len(all_values) > 1:
+                data_rows = all_values[1:]
+                processed_rows = []
+                for row in data_rows:
+                    processed_row = row[:len(unique_headers)]
+                    while len(processed_row) < len(unique_headers):
+                        processed_row.append("")
+                    processed_rows.append(processed_row)
+                
+                df = pd.DataFrame(processed_rows, columns=unique_headers)
+            else:
+                df = pd.DataFrame(columns=unique_headers)
+        else:
+            df = pd.DataFrame()
+            
+    except Exception as e:
+        st.warning(f"gspread로 데이터 로드 실패: {e}\n로컬 파일을 사용합니다.")
+        return None
     
-    # 3. 컬럼 매핑 및 데이터 정리 (gspread와 CSV 모두 공통 처리)
+    # 컬럼 매핑 및 데이터 정리
     if df is not None and not df.empty:
         # 접수일 처리: 신청일자 우선, 없으면 타임스탬프 사용
         if '신청일자' in df.columns:
