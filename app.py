@@ -1416,31 +1416,31 @@ def main_app():
                 if not company_name or not department or not contact or not car_model or not part_no or not part_name or not requirements:
                     st.error("❌ 필수 항목을 모두 입력해주세요.")
                 else:
-                # NO 생성 (기존 최대값 + 1 또는 타임스탬프 기반)
-                if not st.session_state.df.empty and 'NO' in st.session_state.df.columns:
-                    max_no = st.session_state.df['NO'].max()
-                    new_no = int(max_no) + 1 if pd.notnull(max_no) else int(datetime.datetime.now().timestamp())
-                else:
-                    new_no = int(datetime.datetime.now().timestamp())
-                
+                    # NO 생성 (기존 최대값 + 1 또는 타임스탬프 기반)
+                    if not st.session_state.df.empty and 'NO' in st.session_state.df.columns:
+                        max_no = st.session_state.df['NO'].max()
+                        new_no = int(max_no) + 1 if pd.notnull(max_no) else int(datetime.datetime.now().timestamp())
+                    else:
+                        new_no = int(datetime.datetime.now().timestamp())
+                    
                     # 접수일은 오늘 날짜로 자동 설정
                     req_date = datetime.date.today()
-                
-                new_entry = {
-                    "NO": new_no,
-                    "접수일": req_date,
-                    "업체명": company_name,
-                    "부서": department,
-                    "담당자": contact,
-                    "차종": car_model,
-                    "품번": part_no,
-                    "품명": part_name,
+                    
+                    new_entry = {
+                        "NO": new_no,
+                        "접수일": req_date,
+                        "업체명": company_name,
+                        "부서": department,
+                        "담당자": contact,
+                        "차종": car_model,
+                        "품번": part_no,
+                        "품명": part_name,
                         "출하장소": "",  # 관리자가 입력
-                    "요청수량": qty,
+                        "요청수량": qty,
                         "납기일": due_date,
                         "샘플단가": 0,  # 관리자가 입력
                         "샘플금액": 0,  # 관리자가 입력
-                    "요청사항": requirements,
+                        "요청사항": requirements,
                         "도면접수일": None,  # 관리자가 입력
                         "자재 요청일": None,  # 관리자가 입력
                         "자재준비": "",  # 관리자가 입력
@@ -1448,16 +1448,16 @@ def main_app():
                         "출하일": None,  # 관리자가 입력
                         "운송편": "",  # 관리자가 입력
                         "비고": ""  # 관리자가 입력
-                }
-                
-                # DataFrame 상단에 추가
-                st.session_state.df = pd.concat([pd.DataFrame([new_entry]), st.session_state.df], ignore_index=True)
+                    }
+                    
+                    # DataFrame 상단에 추가
+                    st.session_state.df = pd.concat([pd.DataFrame([new_entry]), st.session_state.df], ignore_index=True)
                     # 진행상태 업데이트
                     st.session_state.df = update_progress_status(st.session_state.df)
-                save_data()
+                    save_data()
                     st.success("✅ 의뢰가 성공적으로 등록되었습니다! 관리자가 나머지 정보를 입력합니다.")
                     time.sleep(1.5)
-                st.rerun()
+                    st.rerun()
 
     # --- 3. 휴지통 (DeletionHistoryPanel.tsx 대응) ---
     elif menu == "🗑️ 휴지통 (삭제 내역)":
