@@ -489,7 +489,7 @@ def get_deleted_nos():
     return deleted_nos
 
 def load_data():
-    """데이터 로드 메인 함수 (통합 진입점)"""
+    """데이터 로드 메인 함수 (항상 최신 데이터 로드)"""
     # 삭제 기록 먼저 초기화
     if 'deleted_history' not in st.session_state:
         if os.path.exists(HISTORY_FILE):
@@ -504,49 +504,45 @@ def load_data():
     # 삭제된 NO 목록 가져오기
     deleted_nos = get_deleted_nos()
     
-    if 'df' not in st.session_state:
-        # 1. 구글 시트에서 최신 데이터 가져오기 시도
-        df = load_data_from_google_sheets()
-        
-        if df is not None and not df.empty:
-            # 데이터 클리닝 (이미 load_data_from_google_sheets 내부에서 적용되지만, 추가 안전장치)
-            df = clean_dataframe(df)
-            st.session_state.df = convert_dataframe_types(df)
-            st.session_state.df = update_progress_status(st.session_state.df)
-            # 삭제된 NO 필터링
-            if 'NO' in st.session_state.df.columns and deleted_nos:
-                st.session_state.df = st.session_state.df[~st.session_state.df['NO'].isin(deleted_nos)]
-            # 구글 시트 데이터가 있으면 로컬에도 백업 저장
-            save_data_to_local() 
-        elif os.path.exists(DATA_FILE):
-            # 2. 구글 시트 실패 시 로컬 파일 로드
-            try:
-                with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    df = pd.DataFrame(data)
-                    # 데이터 클리닝 적용
-                    df = clean_dataframe(df)
-                    st.session_state.df = convert_dataframe_types(df)
-                    st.session_state.df = update_progress_status(st.session_state.df)
-                    # 삭제된 NO 필터링
-                    if 'NO' in st.session_state.df.columns and deleted_nos:
-                        st.session_state.df = st.session_state.df[~st.session_state.df['NO'].isin(deleted_nos)]
-            except:
-                st.session_state.df = pd.DataFrame(INITIAL_DATA)
-                st.session_state.df = convert_dataframe_types(st.session_state.df)
-                st.session_state.df = update_progress_status(st.session_state.df)
-        else:
-            st.session_state.df = pd.DataFrame(INITIAL_DATA)
-            st.session_state.df = convert_dataframe_types(st.session_state.df)
-            st.session_state.df = update_progress_status(st.session_state.df)
+    # 항상 구글 시트에서 최신 데이터 가져오기 시도
+    df = load_data_from_google_sheets()
+    
+    if df is not None and not df.empty:
+        # 데이터 클리닝 (이미 load_data_from_google_sheets 내부에서 적용되지만, 추가 안전장치)
+        df = clean_dataframe(df)
+        df = convert_dataframe_types(df)
+        df = update_progress_status(df)
+        # 삭제된 NO 필터링
+        if 'NO' in df.columns and deleted_nos:
+            df = df[~df['NO'].isin(deleted_nos)]
+        # 구글 시트 데이터가 있으면 로컬에도 백업 저장
+        st.session_state.df = df
+        save_data_to_local()
+    elif os.path.exists(DATA_FILE):
+        # 구글 시트 실패 시 로컬 파일 로드
+        try:
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                df = pd.DataFrame(data)
+                # 데이터 클리닝 적용
+                df = clean_dataframe(df)
+                df = convert_dataframe_types(df)
+                df = update_progress_status(df)
+                # 삭제된 NO 필터링
+                if 'NO' in df.columns and deleted_nos:
+                    df = df[~df['NO'].isin(deleted_nos)]
+                st.session_state.df = df
+        except:
+            df = pd.DataFrame(INITIAL_DATA)
+            df = convert_dataframe_types(df)
+            df = update_progress_status(df)
+            st.session_state.df = df
     else:
-        # df가 이미 있는 경우에도 삭제된 NO 필터링
-        if 'NO' in st.session_state.df.columns and deleted_nos:
-            before_count = len(st.session_state.df)
-            st.session_state.df = st.session_state.df[~st.session_state.df['NO'].isin(deleted_nos)]
-            after_count = len(st.session_state.df)
-            if before_count != after_count:
-                save_data_to_local()
+        # 초기 데이터 사용
+        df = pd.DataFrame(INITIAL_DATA)
+        df = convert_dataframe_types(df)
+        df = update_progress_status(df)
+        st.session_state.df = df
 
 def save_data_to_google_sheets():
     """구글 시트에 데이터 저장 (gspread 사용)"""
@@ -712,9 +708,6 @@ def main_app():
         
         st.divider()
         if st.button("🔄 데이터 새로고침 (구글폼 동기화)"):
-            # 강제로 다시 로드 (삭제된 데이터는 자동으로 필터링됨)
-            if 'df' in st.session_state:
-                del st.session_state.df
             st.rerun()
         
         st.divider()
