@@ -706,8 +706,8 @@ def main_app():
                     st.write("**진행상태**")
                 with header_cols[7]:
                     st.write("**작업**")
-        st.divider()
-        
+                st.divider()
+                
                 # 각 행 표시
                 for i, row in list_df.iterrows():
                     cols = st.columns([0.5, 1.2, 1.5, 2.5, 2, 1.2, 1.2, 1.5])
@@ -740,8 +740,8 @@ def main_app():
                     
                     if i < len(list_df) - 1:
                         st.divider()
-        else:
-            st.info("접수된 샘플 요청이 없습니다.")
+            else:
+                st.info("접수된 샘플 요청이 없습니다.")
         
         st.divider()
         
@@ -752,7 +752,7 @@ def main_app():
         with col_filter1:
             # CUSTOMER는 본인 회사만 볼 수 있으므로 업체 필터 비활성화
             if user['role'] == 'ADMIN':
-            company_filter = st.selectbox("업체 필터", ["전체"] + list(df['업체명'].unique()) if not df.empty and '업체명' in df.columns else [])
+                company_filter = st.selectbox("업체 필터", ["전체"] + list(df['업체명'].unique()) if not df.empty and '업체명' in df.columns else [])
             else:
                 # CUSTOMER는 본인 회사만 표시
                 company_filter = "전체"
