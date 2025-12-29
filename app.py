@@ -34,46 +34,30 @@ SPREADSHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?for
 # gspread 클라이언트 초기화 (선택적)
 @st.cache_resource
 def init_gspread_client():
-    """gspread 클라이언트 초기화"""
+    """Incorrect Padding 오류를 방지하며 gspread 초기화"""
     if not USE_GSPREAD:
         return None
     
     try:
-        # Streamlit secrets에서 서비스 계정 정보 가져오기
-        # [connections.gsheets] 형식 우선, 없으면 [gcp_service_account] 형식 사용
-        credentials_info = None
-        
-        if 'connections' in st.secrets and 'gsheets' in st.secrets['connections']:
-            # st.connection 방식: [connections.gsheets]
-            credentials_info = dict(st.secrets['connections']['gsheets'])
-        elif 'gcp_service_account' in st.secrets:
-            # 기존 방식: [gcp_service_account] (하위 호환성)
-            credentials_info = dict(st.secrets['gcp_service_account'])
-        
-        if credentials_info:
-            # private_key 포맷 수정 (TOML에서 여러 줄 문자열로 저장된 경우 처리)
-            if 'private_key' in credentials_info:
-                private_key = credentials_info['private_key']
-                # 문자열로 저장된 경우 \n을 실제 줄바꿈으로 변환
-                if isinstance(private_key, str):
-                    # 이미 올바른 형식인지 확인 (-----BEGIN으로 시작하는지)
-                    if '-----BEGIN' not in private_key:
-                        # \n을 실제 줄바꿈으로 변환
-                        private_key = private_key.replace('\\n', '\n')
-                    # 줄바꿈이 없는 경우 추가 (PEM 형식은 줄바꿈이 필요)
-                    if '\n' not in private_key and '-----BEGIN' in private_key:
-                        # BEGIN과 END 사이에 줄바꿈 추가 시도
-                        private_key = private_key.replace('-----BEGIN', '-----BEGIN\n').replace('-----END', '\n-----END')
-                    credentials_info['private_key'] = private_key
-            
-            credentials = service_account.Credentials.from_service_account_info(
-                credentials_info,
-                scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-            )
-            gc = gspread.authorize(credentials)
-            return gc
+        # 1. 먼저 connections.gsheets 섹션을 찾고 없으면 gcp_service_account 확인
+        if "connections" in st.secrets and "gsheets" in st.secrets.connections:
+            credentials_info = dict(st.secrets.connections.gsheets)
+        elif "gcp_service_account" in st.secrets:
+            credentials_info = dict(st.secrets.gcp_service_account)
         else:
             return None
+
+        # private_key의 \n 문자가 실제 줄바꿈으로 처리되도록 보정
+        if "private_key" in credentials_info:
+            credentials_info["private_key"] = credentials_info["private_key"].replace("\\n", "\n")
+
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        
+        creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=scopes)
+        return gspread.authorize(creds)
     except Exception as e:
         st.warning(f"gspread 초기화 실패: {e}")
         return None
@@ -583,19 +567,22 @@ def login_screen():
             submitted = st.form_submit_button("로그인")
             
             if submitted:
-                # 입력값 공백 제거 및 소문자 변환 (대소문자 구분 없이 처리)
-                username_clean = username.strip().lower() if username else ""
+                # 입력값 공백 제거
+                username_clean = username.strip() if username else ""
                 password_clean = password.strip() if password else ""
                 
                 # 간단한 인증 로직 (실제 사용시 DB 연동 권장)
-                if username_clean == "admin" and password_clean == "1234":
+                # 관리자
+                if username_clean.lower() == "admin" and password_clean == "1234":
                     st.session_state.user = {"name": "관리자", "role": "ADMIN", "companyName": "신성오토텍"}
                     st.success("로그인 성공!")
                     st.rerun()
-                elif username_clean == "user" and password_clean == "1234":
+                # 현대자동차
+                elif username_clean.lower() == "user" and password_clean == "1234":
                     st.session_state.user = {"name": "홍길동", "role": "CUSTOMER", "companyName": "현대자동차"}
                     st.rerun()
-                elif username_clean == "infac" and password_clean == "infac1234":
+                # infac
+                elif username_clean.lower() == "infac" and password_clean == "infac1234":
                     st.session_state.user = {"name": "infac", "role": "CUSTOMER", "companyName": "infac"}
                     st.success("로그인 성공!")
                     st.rerun()
