@@ -51,6 +51,21 @@ def init_gspread_client():
             credentials_info = dict(st.secrets['gcp_service_account'])
         
         if credentials_info:
+            # private_key 포맷 수정 (TOML에서 여러 줄 문자열로 저장된 경우 처리)
+            if 'private_key' in credentials_info:
+                private_key = credentials_info['private_key']
+                # 문자열로 저장된 경우 \n을 실제 줄바꿈으로 변환
+                if isinstance(private_key, str):
+                    # 이미 올바른 형식인지 확인 (-----BEGIN으로 시작하는지)
+                    if '-----BEGIN' not in private_key:
+                        # \n을 실제 줄바꿈으로 변환
+                        private_key = private_key.replace('\\n', '\n')
+                    # 줄바꿈이 없는 경우 추가 (PEM 형식은 줄바꿈이 필요)
+                    if '\n' not in private_key and '-----BEGIN' in private_key:
+                        # BEGIN과 END 사이에 줄바꿈 추가 시도
+                        private_key = private_key.replace('-----BEGIN', '-----BEGIN\n').replace('-----END', '\n-----END')
+                    credentials_info['private_key'] = private_key
+            
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_info,
                 scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']

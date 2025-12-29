@@ -52,7 +52,11 @@
 type = "service_account"
 project_id = "your-project-id"
 private_key_id = "your-private-key-id"
-private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+private_key = """-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...
+(여기에 실제 private key 내용 전체를 붙여넣으세요)
+...
+-----END PRIVATE KEY-----"""
 client_email = "your-service-account@your-project.iam.gserviceaccount.com"
 client_id = "your-client-id"
 auth_uri = "https://accounts.google.com/o/oauth2/auth"
@@ -62,9 +66,11 @@ client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/your-s
 ```
 
 **중요**: 
-- JSON 파일의 내용을 그대로 복사하여 위 형식에 맞게 변환하세요.
+- `private_key`는 **세 개의 큰따옴표(`"""`)**로 감싸서 여러 줄 문자열로 입력하세요.
+- JSON 파일의 `private_key` 값을 그대로 복사하여 붙여넣으세요 (줄바꿈 포함).
 - `[connections.gsheets]` 형식이 권장됩니다 (코드와 일치).
 - 기존 `[gcp_service_account]` 형식도 지원됩니다 (하위 호환성).
+- **"Incorrect padding" 오류가 발생하면 `private_key` 포맷을 확인하세요.**
 
 ### 3.3 JSON을 TOML로 변환하는 방법
 JSON 파일의 각 필드를 TOML 형식으로 변환:
@@ -87,7 +93,9 @@ JSON 파일의 각 필드를 TOML 형식으로 변환:
 
 ## 문제 해결
 
-### gspread 초기화 실패
+### gspread 초기화 실패 / "Incorrect padding" 오류
+- **`private_key` 포맷 확인**: 세 개의 큰따옴표(`"""`)로 감싸서 여러 줄 문자열로 입력했는지 확인
+- JSON 파일의 `private_key` 값을 그대로 복사했는지 확인 (줄바꿈 포함)
 - Secrets 설정이 올바른지 확인
 - 서비스 계정 이메일이 시트에 공유되었는지 확인
 - API가 활성화되었는지 확인
