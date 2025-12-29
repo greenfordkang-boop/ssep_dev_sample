@@ -215,7 +215,9 @@ def load_data_from_google_sheets():
         
         if df is None or df.empty:
             return None
-        
+    
+    # 데이터가 있는 경우 처리
+    if df is not None and not df.empty:
         # 2. 구글 폼 헤더를 앱 내부 컬럼명으로 변경 (매핑)
         # 새 폼 구조: 타임스탬프, 신청일자, 업체명 입력, 담당자 성함 입력, 연락처 입력, 이메일 입력, 품목명 입력, 요청수량 입력, 납기희망일 입력, 요청사항 및 비고 입력
         
@@ -258,8 +260,8 @@ def load_data_from_google_sheets():
         # 구글 폼에는 NO가 없으므로 1000번부터 시작해서 자동으로 붙임
         if 'NO' not in df.columns or df['NO'].isnull().all() or (df['NO'] == "").all():
             df['NO'] = range(1001, 1001 + len(df))
-
-        return df
+    
+    return df
 
 def create_backup_manual():
     """수동 백업 생성"""
