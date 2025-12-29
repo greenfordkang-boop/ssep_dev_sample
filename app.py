@@ -79,40 +79,59 @@ def load_data():
     """스프레드시트에서 데이터 읽어서 pandas DataFrame으로 반환"""
     client = init_gspread()
     if not client:
-        return None
+        return pd.DataFrame()
     
     try:
-        # 스프레드시트 열기
-        spreadsheet = client.open_by_key(MANAGEMENT_SPREADSHEET_ID)
+        sh = client.open_by_key(MANAGEMENT_SPREADSHEET_ID)
+        ws = sh.worksheet(MANAGEMENT_WORKSHEET_NAME)
         
-        # 지정된 워크시트 가져오기
-        ws = spreadsheet.worksheet(MANAGEMENT_WORKSHEET_NAME)
-        
-        # 모든 값 가져오기
         values = ws.get_all_values()
         
-        # 1) 완전히 빈 행 제거
-        values = [row for row in values if any(cell.strip() for cell in row)]
+        # 1) 완전히 빈 행 제거 (모든 셀이 공백/빈 문자열인 행)
+        values = [row for row in values if any(cell.strip() for cell in row if cell)]
         
         # 데이터 없으면 반환
         if not values:
             return pd.DataFrame()
         
-        # 2) 첫 행을 헤더로 사용
-        header = [h.strip() for h in values[0]]
+        # 2) 'NO'로 시작하는 행을 찾아 헤더로 사용
+        header_idx = None
+        for idx, row in enumerate(values):
+            if row and len(row) > 0 and str(row[0]).strip().upper() == 'NO':
+                header_idx = idx
+                break
         
-        # 3) 나머지가 데이터
-        rows = [[c.strip() for c in r] for r in values[1:]]
+        # 헤더 행을 찾지 못한 경우
+        if header_idx is None:
+            return pd.DataFrame()
         
-        # DataFrame 생성
-        df = pd.DataFrame(rows, columns=header)
+        # 3) 헤더와 데이터 분리
+        header = [str(h).strip() for h in values[header_idx]]
+        data_rows = values[header_idx + 1:]
+        
+        # 데이터 행도 strip() 적용
+        data_rows = [[str(c).strip() for c in r] for r in data_rows]
+        
+        # 4) DataFrame 생성
+        df = pd.DataFrame(data_rows, columns=header)
+        
+        # 5) 불필요한 컬럼 제거
+        # - 'Unnamed'로 시작하는 컬럼
+        # - '열'로 끝나는 컬럼 (예: '1열', '2열', ...)
+        columns_to_remove = []
+        for col in df.columns:
+            col_str = str(col)
+            if col_str.startswith('Unnamed') or col_str.endswith('열'):
+                columns_to_remove.append(col)
+        
+        if columns_to_remove:
+            df = df.drop(columns=columns_to_remove)
         
         return df
-            
+        
     except Exception as e:
-        # 예외 발생 시 st.error로 메시지 출력
-        st.error(f"데이터 로드 실패: {e}")
-        return None
+        st.error(f"구글 시트 데이터 로드 실패: {e}")
+        return pd.DataFrame()
 
 # gspread 클라이언트 초기화 (선택적)
 @st.cache_resource
