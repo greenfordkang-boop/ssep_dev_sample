@@ -75,7 +75,7 @@ def init_gspread():
         st.error(f"인증 오류: {e}")
         return None
 
-def load_management_data():
+def load_data():
     """스프레드시트에서 데이터 읽어서 pandas DataFrame으로 반환"""
     client = init_gspread()
     if not client:
@@ -86,48 +86,31 @@ def load_management_data():
         spreadsheet = client.open_by_key(MANAGEMENT_SPREADSHEET_ID)
         
         # 지정된 워크시트 가져오기
-        worksheet = spreadsheet.worksheet(MANAGEMENT_WORKSHEET_NAME)
+        ws = spreadsheet.worksheet(MANAGEMENT_WORKSHEET_NAME)
         
         # 모든 값 가져오기
-        all_values = worksheet.get_all_values()
+        values = ws.get_all_values()
         
-        if len(all_values) == 0:
+        # 1) 완전히 빈 행 제거
+        values = [row for row in values if any(cell.strip() for cell in row)]
+        
+        # 데이터 없으면 반환
+        if not values:
             return pd.DataFrame()
         
-        # 첫 번째 행은 컬럼명
-        headers = all_values[0]
+        # 2) 첫 행을 헤더로 사용
+        header = [h.strip() for h in values[0]]
         
-        # 중복된 헤더 처리
-        seen = {}
-        unique_headers = []
-        for i, header in enumerate(headers):
-            if not header or header.strip() == "":
-                header = f"Unnamed_{i}"
-            elif header in seen:
-                seen[header] += 1
-                header = f"{header}_{seen[header]}"
-            else:
-                seen[header] = 0
-            unique_headers.append(header)
+        # 3) 나머지가 데이터
+        rows = [[c.strip() for c in r] for r in values[1:]]
         
-        # 두 번째 행부터 데이터
-        if len(all_values) > 1:
-            data_rows = all_values[1:]
-            # 헤더 수에 맞게 데이터 행 정리
-            processed_rows = []
-            for row in data_rows:
-                processed_row = row[:len(unique_headers)]
-                while len(processed_row) < len(unique_headers):
-                    processed_row.append("")
-                processed_rows.append(processed_row)
-            
-            df = pd.DataFrame(processed_rows, columns=unique_headers)
-            return df
-        else:
-            # 헤더만 있는 경우
-            return pd.DataFrame(columns=unique_headers)
+        # DataFrame 생성
+        df = pd.DataFrame(rows, columns=header)
+        
+        return df
             
     except Exception as e:
+        # 예외 발생 시 st.error로 메시지 출력
         st.error(f"데이터 로드 실패: {e}")
         return None
 
