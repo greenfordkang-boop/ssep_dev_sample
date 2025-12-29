@@ -31,109 +31,7 @@ HISTORY_FILE = "ssep_history.json"
 SHEET_ID = "12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s"
 SPREADSHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
-# 관리대장 시트 설정
-MANAGEMENT_SPREADSHEET_ID = "1aHe7GQsPnZfMjZVPy4jt0elCEADKubWSSeonhZTKR9E"
-MANAGEMENT_WORKSHEET_NAME = "시트1"
-
-# 관리대장 시트용 gspread 함수들
-def init_gspread():
-    """인증해서 gspread client 반환"""
-    if not USE_GSPREAD:
-        return None
-    
-    try:
-        # Streamlit Cloud Secrets에서 서비스 계정 정보 불러오기
-        if "connections" in st.secrets and "gsheets" in st.secrets.connections:
-            credentials_info = dict(st.secrets.connections.gsheets)
-        elif "gcp_service_account" in st.secrets:
-            credentials_info = dict(st.secrets.gcp_service_account)
-        else:
-            return None
-
-        # private_key의 \n 문자가 실제 줄바꿈으로 처리되도록 보정
-        if "private_key" in credentials_info:
-            private_key = credentials_info["private_key"]
-            
-            # 문자열이 아닌 경우 문자열로 변환
-            if not isinstance(private_key, str):
-                private_key = str(private_key)
-            
-            # 이스케이프된 \n을 실제 줄바꿈으로 변환 (여러 번 반복하여 모든 경우 처리)
-            while "\\n" in private_key:
-                private_key = private_key.replace("\\n", "\n")
-            
-            credentials_info["private_key"] = private_key
-
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        
-        creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=scopes)
-        return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"인증 오류: {e}")
-        return None
-
-def load_data():
-    """스프레드시트에서 데이터 읽어서 pandas DataFrame으로 반환"""
-    client = init_gspread()
-    if not client:
-        return pd.DataFrame()
-    
-    try:
-        sh = client.open_by_key(MANAGEMENT_SPREADSHEET_ID)
-        ws = sh.worksheet(MANAGEMENT_WORKSHEET_NAME)
-        
-        values = ws.get_all_values()
-        
-        # 1) 완전히 빈 행 제거 (모든 셀이 공백/빈 문자열인 행)
-        values = [row for row in values if any(cell.strip() for cell in row if cell)]
-        
-        # 데이터 없으면 반환
-        if not values:
-            return pd.DataFrame()
-        
-        # 2) 'NO'로 시작하는 행을 찾아 헤더로 사용
-        header_idx = None
-        for idx, row in enumerate(values):
-            if row and len(row) > 0 and str(row[0]).strip().upper() == 'NO':
-                header_idx = idx
-                break
-        
-        # 헤더 행을 찾지 못한 경우
-        if header_idx is None:
-            return pd.DataFrame()
-        
-        # 3) 헤더와 데이터 분리
-        header = [str(h).strip() for h in values[header_idx]]
-        data_rows = values[header_idx + 1:]
-        
-        # 데이터 행도 strip() 적용
-        data_rows = [[str(c).strip() for c in r] for r in data_rows]
-        
-        # 4) DataFrame 생성
-        df = pd.DataFrame(data_rows, columns=header)
-        
-        # 5) 불필요한 컬럼 제거
-        # - 'Unnamed'로 시작하는 컬럼
-        # - '열'로 끝나는 컬럼 (예: '1열', '2열', ...)
-        columns_to_remove = []
-        for col in df.columns:
-            col_str = str(col)
-            if col_str.startswith('Unnamed') or col_str.endswith('열'):
-                columns_to_remove.append(col)
-        
-        if columns_to_remove:
-            df = df.drop(columns=columns_to_remove)
-        
-        return df
-        
-    except Exception as e:
-        st.error(f"구글 시트 데이터 로드 실패: {e}")
-        return pd.DataFrame()
-
-# gspread 클라이언트 초기화 (선택적)
+# gspread 클라이언트 초기화 (통합)
 @st.cache_resource
 def init_gspread_client():
     """Incorrect Padding 오류를 방지하며 gspread 초기화"""
@@ -300,13 +198,12 @@ def load_data_from_google_sheets():
     """구글 시트에서 데이터를 읽어와 앱 형식에 맞게 변환 (gspread 우선, CSV fallback)"""
     df = None
     
-    # 1. gspread를 사용한 읽기 시도
+    # 1. gspread를 사용한 읽기 시도 (구글폼 응답 시트)
     if USE_GSPREAD:
         gc = init_gspread_client()
         if gc:
             try:
                 spreadsheet = gc.open_by_key(SHEET_ID)
-                # 첫 번째 워크시트 가져오기
                 worksheet = spreadsheet.sheet1
                 
                 # 헤더 중복 문제를 해결하기 위해 get_all_values() 사용
@@ -320,36 +217,30 @@ def load_data_from_google_sheets():
                     seen = {}
                     unique_headers = []
                     for i, header in enumerate(headers):
-                        if not header or header.strip() == "":
-                            # 빈 헤더는 인덱스로 대체
-                            header = f"Unnamed_{i}"
-                        elif header in seen:
-                            # 중복된 헤더는 번호 추가
-                            seen[header] += 1
-                            header = f"{header}_{seen[header]}"
+                        header_str = str(header).strip() if header else ""
+                        if not header_str:
+                            header_str = f"Unnamed_{i}"
+                        elif header_str in seen:
+                            seen[header_str] += 1
+                            header_str = f"{header_str}_{seen[header_str]}"
                         else:
-                            seen[header] = 0
-                        unique_headers.append(header)
+                            seen[header_str] = 0
+                        unique_headers.append(header_str)
                     
                     # 데이터 행 처리
                     if len(all_values) > 1:
                         data_rows = all_values[1:]
-                        # 헤더 수에 맞게 데이터 행 정리
                         processed_rows = []
                         for row in data_rows:
-                            # 헤더 수만큼만 사용 (나머지는 무시)
                             processed_row = row[:len(unique_headers)]
-                            # 부족한 경우 빈 문자열로 채움
                             while len(processed_row) < len(unique_headers):
                                 processed_row.append("")
                             processed_rows.append(processed_row)
                         
                         df = pd.DataFrame(processed_rows, columns=unique_headers)
                     else:
-                        # 헤더만 있는 경우
                         df = pd.DataFrame(columns=unique_headers)
                 else:
-                    # 빈 시트
                     df = pd.DataFrame()
                     
             except Exception as e:
@@ -359,8 +250,6 @@ def load_data_from_google_sheets():
     # 2. gspread 실패 시 CSV 방식으로 fallback
     if df is None or df.empty:
         try:
-            # CSV 데이터 읽기 (에러 나는 줄은 건너뜀)
-            # urllib을 사용하여 더 명확한 에러 처리
             try:
                 with urllib.request.urlopen(SPREADSHEET_URL, timeout=10) as response:
                     df = pd.read_csv(response, on_bad_lines='skip', encoding='utf-8')
@@ -408,66 +297,19 @@ def load_data_from_google_sheets():
                 st.error(f"**❌ 구글 시트 데이터 로드 실패**: {error_msg}\n\n로컬 파일을 사용합니다.")
             return None
         
-        # CSV 로드 후 데이터 확인
         if df is None or df.empty:
             return None
-        
-        # CSV에서 로드한 데이터 처리
-        # 구글 폼 헤더를 앱 내부 컬럼명으로 변경 (매핑)
-        # 접수일 처리: 신청일자 우선, 없으면 타임스탬프 사용
-        if '신청일자' in df.columns:
-            df['접수일'] = df['신청일자']
-        elif '타임스탬프' in df.columns:
-            df['접수일'] = df['타임스탬프']
-        
-        # 컬럼 매핑 (모든 가능한 컬럼명을 매핑)
-        rename_map = {
-            # 새 폼 구조
-            '업체명 입력': '업체명',
-            '담당자 성함 입력': '담당자',
-            '품목명 입력': '품명',
-            '요청수량 입력': '요청수량',
-            '납기희망일 입력': '납기일',
-            '요청사항 및 비고 입력': '요청사항',
-            '연락처 입력': '연락처',
-            '이메일 입력': '이메일',
-            # 기존 폼 구조 (하위 호환성)
-            '담당자 성함': '담당자',
-            '품목명': '품명',
-            '납기희망일': '납기일',
-            '요청사항 및 비고': '요청사항'
-        }
-        df = df.rename(columns=rename_map)
-
-        # 날짜 형식 정리 (타임스탬프 2024. 12. 28... -> 2024-12-28)
-        if '접수일' in df.columns:
-            df['접수일'] = pd.to_datetime(df['접수일'], errors='coerce').dt.date
-        
-        # 없는 컬럼 채우기 (앱 작동을 위해 필수)
-        required_cols = ['NO', '부서', '차종', '품번', '출하장소', '자재준비', '샘플 완료일', '출하일', '비고', '샘플단가', '샘플금액', '운송편', '도면접수일', '자재 요청일']
-        for col in required_cols:
-            if col not in df.columns:
-                df[col] = ""  # 빈 값으로 생성
-
-        # NO(주문번호) 자동 생성 (없으면 인덱스 기반으로 생성)
-        # 구글 폼에는 NO가 없으므로 1000번부터 시작해서 자동으로 붙임
-        if 'NO' not in df.columns or df['NO'].isnull().all() or (df['NO'] == "").all():
-            df['NO'] = range(1001, 1001 + len(df))
     
-    # 데이터가 있는 경우 처리 (gspread로 로드한 경우)
+    # 3. 컬럼 매핑 및 데이터 정리 (gspread와 CSV 모두 공통 처리)
     if df is not None and not df.empty:
-        # 2. 구글 폼 헤더를 앱 내부 컬럼명으로 변경 (매핑)
-        # 새 폼 구조: 타임스탬프, 신청일자, 업체명 입력, 담당자 성함 입력, 연락처 입력, 이메일 입력, 품목명 입력, 요청수량 입력, 납기희망일 입력, 요청사항 및 비고 입력
-        
         # 접수일 처리: 신청일자 우선, 없으면 타임스탬프 사용
         if '신청일자' in df.columns:
             df['접수일'] = df['신청일자']
         elif '타임스탬프' in df.columns:
             df['접수일'] = df['타임스탬프']
         
-        # 컬럼 매핑 (모든 가능한 컬럼명을 매핑)
+        # 컬럼 매핑 (구글 폼 헤더 → 내부 컬럼명)
         rename_map = {
-            # 새 폼 구조
             '업체명 입력': '업체명',
             '담당자 성함 입력': '담당자',
             '품목명 입력': '품명',
@@ -483,26 +325,40 @@ def load_data_from_google_sheets():
             '요청사항 및 비고': '요청사항'
         }
         df = df.rename(columns=rename_map)
-
-        # 3. 날짜 형식 정리 (타임스탬프 2024. 12. 28... -> 2024-12-28)
+        
+        # 날짜 형식 정리
         if '접수일' in df.columns:
             df['접수일'] = pd.to_datetime(df['접수일'], errors='coerce').dt.date
         
-        # 4. 없는 컬럼 채우기 (앱 작동을 위해 필수)
-        required_cols = ['NO', '부서', '차종', '품번', '출하장소', '자재준비', '샘플 완료일', '출하일', '비고', '샘플단가', '샘플금액', '운송편', '도면접수일', '자재 요청일']
+        # 필수 컬럼 강제 생성
+        required_cols = [
+            'NO', '접수일', '업체명', '부서', '담당자', '차종', '품번', '품명',
+            '출하장소', '요청수량', '납기일', '요청사항',
+            '도면접수일', '자재 요청일', '자재준비', '샘플 완료일',
+            '출하일', '운송편', '비고', '샘플단가', '샘플금액', '진행상태'
+        ]
         for col in required_cols:
             if col not in df.columns:
-                df[col] = ""  # 빈 값으로 생성
-
-        # 5. NO(주문번호) 자동 생성 (없으면 인덱스 기반으로 생성)
-        # 구글 폼에는 NO가 없으므로 1000번부터 시작해서 자동으로 붙임
+                df[col] = "" if col != 'NO' else None
+        
+        # NO 자동 생성 (최대값 + 1부터)
         if 'NO' not in df.columns or df['NO'].isnull().all() or (df['NO'] == "").all():
-            df['NO'] = range(1001, 1001 + len(df))
+            # 기존 데이터에서 최대 NO 찾기
+            max_existing_no = 1000
+            if 'df' in st.session_state and not st.session_state.df.empty and 'NO' in st.session_state.df.columns:
+                existing_nos = st.session_state.df['NO'].dropna()
+                if not existing_nos.empty:
+                    max_existing_no = int(existing_nos.max())
+            
+            # 최대값 + 1부터 시작
+            df['NO'] = range(max_existing_no + 1, max_existing_no + 1 + len(df))
+        
+        # '열'로 끝나는 컬럼 제거 (관리대장 시트의 요약 컬럼)
+        columns_to_remove = [col for col in df.columns if str(col).endswith('열')]
+        if columns_to_remove:
+            df = df.drop(columns=columns_to_remove)
     
-    # 함수 마지막에 df 반환 (없으면 None)
-    if df is None or df.empty:
-        return None
-    return df
+    return df if df is not None and not df.empty else None
 
 def create_backup_manual():
     """수동 백업 생성"""
@@ -578,8 +434,8 @@ def get_deleted_nos():
     return deleted_nos
 
 def load_data():
-    """데이터 로드 메인 함수"""
-    # 삭제 기록 먼저 초기화 (save_data_to_local() 호출 전에 필요)
+    """데이터 로드 메인 함수 (통합 진입점)"""
+    # 삭제 기록 먼저 초기화
     if 'deleted_history' not in st.session_state:
         if os.path.exists(HISTORY_FILE):
             try:
@@ -600,14 +456,9 @@ def load_data():
         if df is not None and not df.empty:
             st.session_state.df = convert_dataframe_types(df)
             st.session_state.df = update_progress_status(st.session_state.df)
-            # 삭제된 NO 필터링 (중요: 삭제된 데이터는 제외)
+            # 삭제된 NO 필터링
             if 'NO' in st.session_state.df.columns and deleted_nos:
-                before_count = len(st.session_state.df)
                 st.session_state.df = st.session_state.df[~st.session_state.df['NO'].isin(deleted_nos)]
-                after_count = len(st.session_state.df)
-                if before_count != after_count:
-                    # 삭제된 항목이 필터링되었음을 로그에 기록 (필요시)
-                    pass
             # 구글 시트 데이터가 있으면 로컬에도 백업 저장
             save_data_to_local() 
         elif os.path.exists(DATA_FILE):
@@ -630,14 +481,13 @@ def load_data():
             st.session_state.df = convert_dataframe_types(st.session_state.df)
             st.session_state.df = update_progress_status(st.session_state.df)
     else:
-        # df가 이미 있는 경우에도 삭제된 NO 필터링 (구글 시트 새로고침 시 대비)
+        # df가 이미 있는 경우에도 삭제된 NO 필터링
         if 'NO' in st.session_state.df.columns and deleted_nos:
             before_count = len(st.session_state.df)
             st.session_state.df = st.session_state.df[~st.session_state.df['NO'].isin(deleted_nos)]
             after_count = len(st.session_state.df)
             if before_count != after_count:
-                # 삭제된 항목이 필터링되었음을 확인
-                save_data_to_local()  # 필터링된 데이터 저장
+                save_data_to_local()
 
 def save_data_to_google_sheets():
     """구글 시트에 데이터 저장 (gspread 사용)"""
@@ -796,7 +646,7 @@ def main_app():
         st.title(f"👤 {user['name']}님")
         st.caption(f"{user['role']} | {user['companyName']}")
         
-        menu_options = ["📊 샘플관리 현황판", "📝 신규 샘플 의뢰", "🗑️ 휴지통 (삭제 내역)", "💾 백업 관리", "📋 관리대장 시트"]
+        menu_options = ["📊 샘플관리 현황판", "📝 신규 샘플 의뢰", "🗑️ 휴지통 (삭제 내역)", "💾 백업 관리"]
         if user['role'] == 'ADMIN':
             menu_options.append("📁 데이터 관리")
         menu = st.radio("메뉴 선택", menu_options)
@@ -1222,15 +1072,19 @@ def main_app():
         # 필터링된 데이터프레임의 진행상태도 업데이트 (원본과 동기화)
         filtered_df = update_progress_status(filtered_df)
             
-        # 컬럼 순서 정의 (이미지 템플릿 순서)
-        column_order = ['NO', '접수일', '업체명', '부서', '담당자', '차종', '품번', '품명', '출하장소', 
-                       '요청수량', '납기일', '요청사항', '도면접수일', '자재 요청일', '자재준비', 
-                       '샘플 완료일', '출하일', '운송편', '비고', '샘플단가', '샘플금액', '진행상태']
+        # 컬럼 순서 정의 (요구사항에 맞게 정리)
+        column_order = ['선택', 'NO', '접수일', '업체명', '부서', '담당자', '차종', '품번', '품명',
+                       '출하장소', '요청수량', '납기일', '요청사항', '도면접수일', '자재 요청일',
+                       '자재준비', '샘플 완료일', '출하일', '운송편', '비고', '샘플단가', '샘플금액', '진행상태']
         
         # 컬럼 순서에 맞게 재정렬 (존재하는 컬럼만)
         existing_columns = [col for col in column_order if col in filtered_df_with_select.columns]
-        other_columns = [col for col in filtered_df_with_select.columns if col not in existing_columns and col != '선택']
-        filtered_df_with_select = filtered_df_with_select[['선택'] + existing_columns + other_columns]
+        other_columns = [col for col in filtered_df_with_select.columns if col not in existing_columns]
+        # '선택' 컬럼이 있으면 맨 앞에, 없으면 existing_columns만 사용
+        if '선택' in filtered_df_with_select.columns:
+            filtered_df_with_select = filtered_df_with_select[['선택'] + [c for c in existing_columns if c != '선택'] + other_columns]
+        else:
+            filtered_df_with_select = filtered_df_with_select[existing_columns + other_columns]
         
         # 접수 상태인 항목을 상단에 정렬 (접수 상태 우선 표시)
         if '진행상태' in filtered_df_with_select.columns:
@@ -1293,17 +1147,49 @@ def main_app():
             if not 접수_df.empty:
                 st.markdown("### 📋 접수된 샘플 요청 목록")
                 for idx, row in 접수_df.iterrows():
+                    # 컬럼명 확인 및 값 추출 (매핑된 컬럼명 사용)
+                    no_val = row.get('NO', '') if 'NO' in row else ''
+                    업체명_val = row.get('업체명', '') if '업체명' in row else ''
+                    품명_val = row.get('품명', '') if '품명' in row else ''
+                    접수일_val = row.get('접수일', '') if '접수일' in row else ''
+                    요청수량_val = row.get('요청수량', '') if '요청수량' in row else ''
+                    납기일_val = row.get('납기일', '') if '납기일' in row else ''
+                    진행상태_val = row.get('진행상태', '') if '진행상태' in row else ''
+                    요청사항_val = row.get('요청사항', '') if '요청사항' in row else ''
+                    
                     # 날짜 형식 변환
-                    접수일_str = str(row.get('접수일', 'N/A'))
-                    if hasattr(row.get('접수일'), 'strftime'):
-                        접수일_str = row.get('접수일').strftime('%Y-%m-%d')
+                    접수일_str = 'N/A'
+                    if 접수일_val and pd.notnull(접수일_val) and 접수일_val != "":
+                        if hasattr(접수일_val, 'strftime'):
+                            접수일_str = 접수일_val.strftime('%Y-%m-%d')
+                        else:
+                            접수일_str = str(접수일_val)
+                    
+                    납기일_str = 'N/A'
+                    if 납기일_val and pd.notnull(납기일_val) and 납기일_val != "":
+                        if hasattr(납기일_val, 'strftime'):
+                            납기일_str = 납기일_val.strftime('%Y-%m-%d')
+                        else:
+                            납기일_str = str(납기일_val)
+                    
+                    # 값이 비어있을 때만 N/A 표시
+                    no_display = str(no_val) if no_val and pd.notnull(no_val) and str(no_val).strip() != "" else 'N/A'
+                    업체명_display = str(업체명_val) if 업체명_val and pd.notnull(업체명_val) and str(업체명_val).strip() != "" else 'N/A'
+                    품명_display = str(품명_val) if 품명_val and pd.notnull(품명_val) and str(품명_val).strip() != "" else 'N/A'
+                    요청수량_display = str(요청수량_val) if 요청수량_val and pd.notnull(요청수량_val) and str(요청수량_val).strip() != "" else 'N/A'
+                    진행상태_display = str(진행상태_val) if 진행상태_val and pd.notnull(진행상태_val) and str(진행상태_val).strip() != "" else 'N/A'
+                    요청사항_display = str(요청사항_val) if 요청사항_val and pd.notnull(요청사항_val) and str(요청사항_val).strip() != "" else 'N/A'
                     
                     st.markdown(f"""
                     <div style="background-color: #e8f5e9; padding: 12px; margin: 8px 0; border-left: 5px solid #2e7d32; border-radius: 5px;">
-                        <strong style="color: #1b5e20; font-size: 1.1em;">NO: {row.get('NO', 'N/A')}</strong> | 
-                        <span style="color: #1b5e20;">업체명: <strong>{row.get('업체명', 'N/A')}</strong></span> | 
-                        <span style="color: #1b5e20;">품명: <strong>{row.get('품명', 'N/A')}</strong></span> | 
-                        <span style="color: #1b5e20;">접수일: {접수일_str}</span>
+                        <strong style="color: #1b5e20; font-size: 1.1em;">NO: {no_display}</strong> | 
+                        <span style="color: #1b5e20;">업체명: <strong>{업체명_display}</strong></span> | 
+                        <span style="color: #1b5e20;">품명: <strong>{품명_display}</strong></span> | 
+                        <span style="color: #1b5e20;">접수일: {접수일_str}</span> | 
+                        <span style="color: #1b5e20;">요청수량: {요청수량_display}</span> | 
+                        <span style="color: #1b5e20;">납기일: {납기일_str}</span> | 
+                        <span style="color: #1b5e20;">진행상태: {진행상태_display}</span>
+                        {f'<br><span style="color: #1b5e20;">요청사항: {요청사항_display}</span>' if 요청사항_display != 'N/A' else ''}
                     </div>
                     """, unsafe_allow_html=True)
                 st.divider()
@@ -1689,38 +1575,6 @@ def main_app():
         **수동 백업**
         - 위의 '수동 백업 생성' 버튼을 클릭하여 언제든지 백업을 생성할 수 있습니다
         """)
-    
-    # --- 5. 데이터 관리 (관리자 전용) ---
-    elif menu == "📋 관리대장 시트":
-        st.header("📋 관리대장 시트")
-        
-        # 데이터 로드
-        if 'management_df' not in st.session_state:
-            st.session_state.management_df = None
-        
-        # 새로고침 버튼
-        if st.button("🔄 데이터 새로고침", use_container_width=True, type="primary"):
-            st.session_state.management_df = None
-            st.rerun()
-        
-        # 데이터 로드
-        if st.session_state.management_df is None:
-            with st.spinner("데이터를 불러오는 중..."):
-                df = load_data()
-                if df is not None:
-                    st.session_state.management_df = df
-                    st.success("✅ 관리대장 시트 연결 성공")
-                else:
-                    st.error("❌ 데이터를 불러올 수 없습니다.")
-        
-        # 데이터 표시
-        if st.session_state.management_df is not None:
-            df = st.session_state.management_df
-            if not df.empty:
-                st.dataframe(df, use_container_width=True)
-                st.info(f"총 {len(df)}개의 행이 표시됩니다.")
-            else:
-                st.info("데이터가 없습니다.")
     
     elif menu == "📁 데이터 관리":
         st.header("📁 데이터 관리")
