@@ -269,7 +269,7 @@ def create_backup_manual():
 def get_backup_list():
     """백업 목록 가져오기"""
     backups = []
-        if os.path.exists(DATA_FILE):
+    if os.path.exists(DATA_FILE):
         file_time = datetime.datetime.fromtimestamp(os.path.getmtime(DATA_FILE))
         backups.append({
             "name": "로컬 파일 백업",
