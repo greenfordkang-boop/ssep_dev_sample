@@ -1487,8 +1487,8 @@ def main_app():
                         # 휴지통에서 제거
                         item_key = item.get('NO') or item.get('id')
                         if 'deleted_history' in st.session_state:
-                        st.session_state.deleted_history = [i for i in st.session_state.deleted_history 
-                                                           if (i.get('NO') or i.get('id')) != item_key]
+                            st.session_state.deleted_history = [i for i in st.session_state.deleted_history 
+                                                               if (i.get('NO') or i.get('id')) != item_key]
                         
                         save_data()
                         st.success("복구 완료!")
