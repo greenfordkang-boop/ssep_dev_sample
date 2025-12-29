@@ -583,15 +583,19 @@ def login_screen():
             submitted = st.form_submit_button("로그인")
             
             if submitted:
+                # 입력값 공백 제거 및 소문자 변환 (대소문자 구분 없이 처리)
+                username_clean = username.strip().lower() if username else ""
+                password_clean = password.strip() if password else ""
+                
                 # 간단한 인증 로직 (실제 사용시 DB 연동 권장)
-                if username == "admin" and password == "1234":
+                if username_clean == "admin" and password_clean == "1234":
                     st.session_state.user = {"name": "관리자", "role": "ADMIN", "companyName": "신성오토텍"}
                     st.success("로그인 성공!")
                     st.rerun()
-                elif username == "user" and password == "1234":
+                elif username_clean == "user" and password_clean == "1234":
                     st.session_state.user = {"name": "홍길동", "role": "CUSTOMER", "companyName": "현대자동차"}
                     st.rerun()
-                elif username == "infac" and password == "infac1234":
+                elif username_clean == "infac" and password_clean == "infac1234":
                     st.session_state.user = {"name": "infac", "role": "CUSTOMER", "companyName": "infac"}
                     st.success("로그인 성공!")
                     st.rerun()
