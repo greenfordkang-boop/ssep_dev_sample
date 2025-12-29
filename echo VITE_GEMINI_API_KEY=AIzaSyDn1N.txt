@@ -1,0 +1,1 @@
+echo "VITE_GEMINI_API_KEY=AIzaSyDn1NcWnfUZm___Ga99nUcdyVSQICkjv6U > .env.production
