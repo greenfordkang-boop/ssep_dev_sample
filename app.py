@@ -348,12 +348,12 @@ def convert_dataframe_types(df):
     if df.empty:
         return df
     
-                    # 날짜 컬럼을 datetime 타입으로 변환
+    # 날짜 컬럼을 datetime 타입으로 변환
     date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
-                    for col in date_columns:
+    for col in date_columns:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors='coerce').dt.date
-                            # 빈 날짜는 None으로 처리
+            # 빈 날짜는 None으로 처리
             df[col] = df[col].where(pd.notnull(df[col]), None)
     
     # 숫자 컬럼을 숫자 타입으로 변환
