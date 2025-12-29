@@ -31,6 +31,106 @@ HISTORY_FILE = "ssep_history.json"
 SHEET_ID = "12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s"
 SPREADSHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
+# 관리대장 시트 설정
+MANAGEMENT_SPREADSHEET_ID = "1aHe7GQsPnZfMjZVPy4jt0elCEADKubWSSeonhZTKR9E"
+MANAGEMENT_WORKSHEET_NAME = "시트1"
+
+# 관리대장 시트용 gspread 함수들
+def init_gspread():
+    """인증해서 gspread client 반환"""
+    if not USE_GSPREAD:
+        return None
+    
+    try:
+        # Streamlit Cloud Secrets에서 서비스 계정 정보 불러오기
+        if "connections" in st.secrets and "gsheets" in st.secrets.connections:
+            credentials_info = dict(st.secrets.connections.gsheets)
+        elif "gcp_service_account" in st.secrets:
+            credentials_info = dict(st.secrets.gcp_service_account)
+        else:
+            return None
+
+        # private_key의 \n 문자가 실제 줄바꿈으로 처리되도록 보정
+        if "private_key" in credentials_info:
+            private_key = credentials_info["private_key"]
+            
+            # 문자열이 아닌 경우 문자열로 변환
+            if not isinstance(private_key, str):
+                private_key = str(private_key)
+            
+            # 이스케이프된 \n을 실제 줄바꿈으로 변환 (여러 번 반복하여 모든 경우 처리)
+            while "\\n" in private_key:
+                private_key = private_key.replace("\\n", "\n")
+            
+            credentials_info["private_key"] = private_key
+
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        
+        creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"인증 오류: {e}")
+        return None
+
+def load_management_data():
+    """스프레드시트에서 데이터 읽어서 pandas DataFrame으로 반환"""
+    client = init_gspread()
+    if not client:
+        return None
+    
+    try:
+        # 스프레드시트 열기
+        spreadsheet = client.open_by_key(MANAGEMENT_SPREADSHEET_ID)
+        
+        # 지정된 워크시트 가져오기
+        worksheet = spreadsheet.worksheet(MANAGEMENT_WORKSHEET_NAME)
+        
+        # 모든 값 가져오기
+        all_values = worksheet.get_all_values()
+        
+        if len(all_values) == 0:
+            return pd.DataFrame()
+        
+        # 첫 번째 행은 컬럼명
+        headers = all_values[0]
+        
+        # 중복된 헤더 처리
+        seen = {}
+        unique_headers = []
+        for i, header in enumerate(headers):
+            if not header or header.strip() == "":
+                header = f"Unnamed_{i}"
+            elif header in seen:
+                seen[header] += 1
+                header = f"{header}_{seen[header]}"
+            else:
+                seen[header] = 0
+            unique_headers.append(header)
+        
+        # 두 번째 행부터 데이터
+        if len(all_values) > 1:
+            data_rows = all_values[1:]
+            # 헤더 수에 맞게 데이터 행 정리
+            processed_rows = []
+            for row in data_rows:
+                processed_row = row[:len(unique_headers)]
+                while len(processed_row) < len(unique_headers):
+                    processed_row.append("")
+                processed_rows.append(processed_row)
+            
+            df = pd.DataFrame(processed_rows, columns=unique_headers)
+            return df
+        else:
+            # 헤더만 있는 경우
+            return pd.DataFrame(columns=unique_headers)
+            
+    except Exception as e:
+        st.error(f"데이터 로드 실패: {e}")
+        return None
+
 # gspread 클라이언트 초기화 (선택적)
 @st.cache_resource
 def init_gspread_client():
@@ -694,7 +794,7 @@ def main_app():
         st.title(f"👤 {user['name']}님")
         st.caption(f"{user['role']} | {user['companyName']}")
         
-        menu_options = ["📊 샘플관리 현황판", "📝 신규 샘플 의뢰", "🗑️ 휴지통 (삭제 내역)", "💾 백업 관리"]
+        menu_options = ["📊 샘플관리 현황판", "📝 신규 샘플 의뢰", "🗑️ 휴지통 (삭제 내역)", "💾 백업 관리", "📋 관리대장 시트"]
         if user['role'] == 'ADMIN':
             menu_options.append("📁 데이터 관리")
         menu = st.radio("메뉴 선택", menu_options)
@@ -1589,6 +1689,37 @@ def main_app():
         """)
     
     # --- 5. 데이터 관리 (관리자 전용) ---
+    elif menu == "📋 관리대장 시트":
+        st.header("📋 관리대장 시트")
+        
+        # 데이터 로드
+        if 'management_df' not in st.session_state:
+            st.session_state.management_df = None
+        
+        # 새로고침 버튼
+        if st.button("🔄 데이터 새로고침", use_container_width=True, type="primary"):
+            st.session_state.management_df = None
+            st.rerun()
+        
+        # 데이터 로드
+        if st.session_state.management_df is None:
+            with st.spinner("데이터를 불러오는 중..."):
+                df = load_data()
+                if df is not None:
+                    st.session_state.management_df = df
+                    st.success("✅ 관리대장 시트 연결 성공")
+                else:
+                    st.error("❌ 데이터를 불러올 수 없습니다.")
+        
+        # 데이터 표시
+        if st.session_state.management_df is not None:
+            df = st.session_state.management_df
+            if not df.empty:
+                st.dataframe(df, use_container_width=True)
+                st.info(f"총 {len(df)}개의 행이 표시됩니다.")
+            else:
+                st.info("데이터가 없습니다.")
+    
     elif menu == "📁 데이터 관리":
         st.header("📁 데이터 관리")
         st.info("💡 예전 데이터를 엑셀 파일로 업로드하여 시스템에 추가할 수 있습니다.")
