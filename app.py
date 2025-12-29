@@ -27,9 +27,13 @@ DATA_FILE = "ssep_data.json"
 HISTORY_FILE = "ssep_history.json"
 
 # [중요] 구글 시트 설정
-# 구글 폼 응답 시트 ID: 12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s
-SHEET_ID = "12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s"
+# 구글 폼 응답 시트 ID
+SHEET_ID = "1aHe7GQsPnZfMjZVPy4jt0elCEADKubWSSeonhZTKR9E"
 SPREADSHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+
+# 관리대장 시트 설정 (SHEET_ID와 동일)
+MANAGEMENT_SPREADSHEET_ID = SHEET_ID
+MANAGEMENT_WORKSHEET_NAME = "Form_Responses"
 
 # gspread 클라이언트 초기화 (통합)
 @st.cache_resource
@@ -717,6 +721,9 @@ def main_app():
             
         st.divider()
         st.info("💡 팁: 테이블에서 데이터를 직접 수정할 수 있습니다. (엔터 키 입력 시 자동 저장)")
+
+    # 메인 화면 상단에 시트 ID 표시
+    st.caption(f"현재 연결된 시트 ID: {SHEET_ID}")
 
     # --- 1. 샘플관리 현황판 (Dashboard & Table) ---
     if menu == "📊 샘플관리 현황판":
