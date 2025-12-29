@@ -641,128 +641,9 @@ def main_app():
             st.warning("데이터가 없습니다. 구글 폼으로 접수하거나 로컬 데이터를 확인하세요.")
             st.stop()  # 데이터가 없으면 여기서 중단
         
-        # 접수 목록 실시간 표시 (리스트 형태) - "접수" 상태만 표시
-        st.subheader("📋 접수된 샘플 요청 목록")
-        if not df.empty and '업체명' in df.columns:
-            # "접수" 상태인 항목만 필터링
-            # 고객 필터링 적용 (관리자는 전체, 고객은 본인 회사만)
-            display_df = df.copy()
-            if user['role'] != 'ADMIN' and '업체명' in display_df.columns:
-                display_df = display_df[display_df['업체명'] == user['companyName']]
-            
-            # 진행상태가 "접수"인 항목만 필터링
-            if '진행상태' in display_df.columns:
-                display_df = display_df[display_df['진행상태'] == '접수']
-            
-            if '접수일' in display_df.columns:
-                display_df = display_df.sort_values('접수일', ascending=False, na_position='last')
-            display_df = display_df.head(20)
-            
-            # 클릭된 항목을 저장할 session_state 초기화
-            if 'clicked_item_no' not in st.session_state:
-                st.session_state.clicked_item_no = None
-            
-            # 리스트 형태로 표시 (테이블 형식)
-            list_data = []
-            for idx, row in display_df.iterrows():
-                item_no = row.get('NO', idx)
-                업체명 = row.get('업체명', 'N/A')
-                품명 = row.get('품명', 'N/A')
-                납기일 = row.get('납기일', 'N/A')
-                진행상태 = row.get('진행상태', 'N/A')
-                접수일 = row.get('접수일', 'N/A')
-                
-                # 진행상태에 따른 색상
-                status_color = {
-                    '출하완료': '#28a745',
-                    '생산중': '#ffc107',
-                    '자재준비중': '#17a2b8',
-                    '접수': '#6c757d'
-                }.get(진행상태, '#6c757d')
-                
-                # 날짜 형식 안전하게 변환
-                def safe_date_format(date_value):
-                    """날짜 값을 안전하게 문자열로 변환"""
-                    if pd.isna(date_value) or date_value is None:
-                        return 'N/A'
-                    if isinstance(date_value, str):
-                        return date_value
-                    if isinstance(date_value, (datetime.date, datetime.datetime)):
-                        try:
-                            return date_value.strftime('%Y-%m-%d')
-                        except:
-                            return str(date_value)
-                    return str(date_value)
-                
-                list_data.append({
-                    'NO': item_no,
-                    '접수일': safe_date_format(접수일),
-                    '업체명': 업체명,
-                    '품명': 품명,
-                    '납기일': safe_date_format(납기일),
-                    '진행상태': 진행상태
-                })
-            
-            # 리스트를 데이터프레임으로 변환하여 표시
-            if list_data:
-                list_df = pd.DataFrame(list_data)
-                
-                # 헤더 표시
-                header_cols = st.columns([0.5, 1.2, 1.5, 2.5, 2, 1.2, 1.2, 1.5])
-                with header_cols[0]:
-                    st.write("**순번**")
-                with header_cols[1]:
-                    st.write("**NO**")
-                with header_cols[2]:
-                    st.write("**접수일**")
-                with header_cols[3]:
-                    st.write("**업체명**")
-                with header_cols[4]:
-                    st.write("**품명**")
-                with header_cols[5]:
-                    st.write("**납기일**")
-                with header_cols[6]:
-                    st.write("**진행상태**")
-                with header_cols[7]:
-                    st.write("**작업**")
-                st.divider()
-                
-                # 각 행 표시
-                for i, row in list_df.iterrows():
-                    cols = st.columns([0.5, 1.2, 1.5, 2.5, 2, 1.2, 1.2, 1.5])
-                    with cols[0]:
-                        st.write(f"{i+1}")
-                    with cols[1]:
-                        st.write(f"**{row['NO']}**")
-                    with cols[2]:
-                        st.write(row['접수일'])
-                    with cols[3]:
-                        st.write(f"**{row['업체명']}**")
-                    with cols[4]:
-                        st.write(row['품명'])
-                    with cols[5]:
-                        st.write(row['납기일'])
-                    with cols[6]:
-                        # 진행상태 색상 적용
-                        status_icon = {
-                            '출하완료': '🟢',
-                            '생산중': '🟡',
-                            '자재준비중': '🔵',
-                            '접수': '⚪'
-                        }.get(row['진행상태'], '⚪')
-                        st.write(f"{status_icon} {row['진행상태']}")
-                    with cols[7]:
-                        # 클릭 버튼
-                        if st.button("📌 보기", key=f"view_{row['NO']}_{i}", use_container_width=True):
-                            st.session_state.clicked_item_no = row['NO']
-                            st.rerun()
-                    
-                    if i < len(list_df) - 1:
-                        st.divider()
-            else:
-                st.info("접수된 샘플 요청이 없습니다.")
-        
-        st.divider()
+        # 클릭된 항목을 저장할 session_state 초기화
+        if 'clicked_item_no' not in st.session_state:
+            st.session_state.clicked_item_no = None
         
         # [검색 및 필터] - 대시보드 계산 전에 필터 적용
         col_search, col_filter1, col_filter2 = st.columns([2, 1, 1])
@@ -1160,7 +1041,25 @@ def main_app():
         other_columns = [col for col in filtered_df_with_select.columns if col not in existing_columns and col != '선택']
         filtered_df_with_select = filtered_df_with_select[['선택'] + existing_columns + other_columns]
         
+        # 접수 상태인 항목을 상단에 정렬 (접수 상태 우선 표시)
+        if '진행상태' in filtered_df_with_select.columns:
+            # 접수 상태인 행과 그 외 행을 분리
+            접수_행 = filtered_df_with_select[filtered_df_with_select['진행상태'] == '접수']
+            기타_행 = filtered_df_with_select[filtered_df_with_select['진행상태'] != '접수']
+            # 접수 상태를 먼저, 그 다음 나머지 순서로 정렬
+            filtered_df_with_select = pd.concat([접수_행, 기타_행], ignore_index=True)
+        
         # [메인 테이블] - 데이터 편집 가능 (템플릿 구조에 맞춤)
+        # 접수 상태인 항목을 짙은 녹색으로 표시하기 위해 스타일 적용
+        st.markdown("""
+        <style>
+        /* 접수 상태인 행의 텍스트를 짙은 녹색으로 표시 */
+        div[data-testid="stDataFrame"] table tbody tr td {
+            color: inherit;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
         edited_df = st.data_editor(
             filtered_df_with_select,
             column_config={
@@ -1196,6 +1095,27 @@ def main_app():
             num_rows="dynamic",
             key="data_editor"
         )
+        
+        # 접수 상태인 항목들을 짙은 녹색으로 표시 (접수 항목 요약)
+        if '진행상태' in edited_df.columns:
+            접수_df = edited_df[edited_df['진행상태'] == '접수']
+            if not 접수_df.empty:
+                st.markdown("### 📋 접수된 샘플 요청 목록")
+                for idx, row in 접수_df.iterrows():
+                    # 날짜 형식 변환
+                    접수일_str = str(row.get('접수일', 'N/A'))
+                    if hasattr(row.get('접수일'), 'strftime'):
+                        접수일_str = row.get('접수일').strftime('%Y-%m-%d')
+                    
+                    st.markdown(f"""
+                    <div style="background-color: #e8f5e9; padding: 12px; margin: 8px 0; border-left: 5px solid #2e7d32; border-radius: 5px;">
+                        <strong style="color: #1b5e20; font-size: 1.1em;">NO: {row.get('NO', 'N/A')}</strong> | 
+                        <span style="color: #1b5e20;">업체명: <strong>{row.get('업체명', 'N/A')}</strong></span> | 
+                        <span style="color: #1b5e20;">품명: <strong>{row.get('품명', 'N/A')}</strong></span> | 
+                        <span style="color: #1b5e20;">접수일: {접수일_str}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                st.divider()
         
         # 선택 상태 업데이트
         if '선택' in edited_df.columns:
