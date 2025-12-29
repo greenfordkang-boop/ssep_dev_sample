@@ -170,28 +170,28 @@ def load_data_from_google_sheets():
                 with urllib.request.urlopen(SPREADSHEET_URL, timeout=10) as response:
                     df = pd.read_csv(response, on_bad_lines='skip', encoding='utf-8')
             except urllib.error.HTTPError as e:
-            if e.code == 401:
-                st.error("""
-                **❌ 구글 시트 접근 권한 오류 (401 Unauthorized)**
-                
-                **해결 방법:**
-                1. 구글 시트를 열어주세요: https://docs.google.com/spreadsheets/d/12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s
-                2. 우측 상단의 **"공유"** 버튼을 클릭하세요
-                3. **"링크가 있는 모든 사용자"** 또는 **"모든 사용자"**에게 **"뷰어"** 권한을 부여하세요
-                4. 설정 후 잠시 기다린 뒤 "데이터 새로고침" 버튼을 클릭하세요
-                
-                ⚠️ 시트가 비공개로 설정되어 있으면 CSV export가 작동하지 않습니다.
-                """)
-                return None
-            elif e.code == 403:
-                st.error("""
-                **❌ 구글 시트 접근 거부 (403 Forbidden)**
-                
-                시트에 대한 접근 권한이 없습니다. 시트 소유자에게 접근 권한을 요청하세요.
-                """)
-                return None
-            else:
-                raise e
+                if e.code == 401:
+                    st.error("""
+                    **❌ 구글 시트 접근 권한 오류 (401 Unauthorized)**
+                    
+                    **해결 방법:**
+                    1. 구글 시트를 열어주세요: https://docs.google.com/spreadsheets/d/12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s
+                    2. 우측 상단의 **"공유"** 버튼을 클릭하세요
+                    3. **"링크가 있는 모든 사용자"** 또는 **"모든 사용자"**에게 **"뷰어"** 권한을 부여하세요
+                    4. 설정 후 잠시 기다린 뒤 "데이터 새로고침" 버튼을 클릭하세요
+                    
+                    ⚠️ 시트가 비공개로 설정되어 있으면 CSV export가 작동하지 않습니다.
+                    """)
+                    return None
+                elif e.code == 403:
+                    st.error("""
+                    **❌ 구글 시트 접근 거부 (403 Forbidden)**
+                    
+                    시트에 대한 접근 권한이 없습니다. 시트 소유자에게 접근 권한을 요청하세요.
+                    """)
+                    return None
+                else:
+                    raise e
         
         if df.empty:
             return None
