@@ -641,14 +641,18 @@ def main_app():
             st.warning("데이터가 없습니다. 구글 폼으로 접수하거나 로컬 데이터를 확인하세요.")
             st.stop()  # 데이터가 없으면 여기서 중단
         
-        # 접수 목록 실시간 표시 (리스트 형태)
+        # 접수 목록 실시간 표시 (리스트 형태) - "접수" 상태만 표시
         st.subheader("📋 접수된 샘플 요청 목록")
         if not df.empty and '업체명' in df.columns:
-            # 최근 접수된 항목들을 표시 (최대 20개)
+            # "접수" 상태인 항목만 필터링
             # 고객 필터링 적용 (관리자는 전체, 고객은 본인 회사만)
             display_df = df.copy()
             if user['role'] != 'ADMIN' and '업체명' in display_df.columns:
                 display_df = display_df[display_df['업체명'] == user['companyName']]
+            
+            # 진행상태가 "접수"인 항목만 필터링
+            if '진행상태' in display_df.columns:
+                display_df = display_df[display_df['진행상태'] == '접수']
             
             if '접수일' in display_df.columns:
                 display_df = display_df.sort_values('접수일', ascending=False, na_position='last')
