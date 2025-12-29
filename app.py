@@ -591,6 +591,10 @@ def login_screen():
                 elif username == "user" and password == "1234":
                     st.session_state.user = {"name": "홍길동", "role": "CUSTOMER", "companyName": "현대자동차"}
                     st.rerun()
+                elif username == "infac" and password == "infac1234":
+                    st.session_state.user = {"name": "infac", "role": "CUSTOMER", "companyName": "infac"}
+                    st.success("로그인 성공!")
+                    st.rerun()
                 else:
                     st.error("아이디 또는 비밀번호가 잘못되었습니다.")
 
