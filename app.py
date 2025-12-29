@@ -192,8 +192,28 @@ def load_data_from_google_sheets():
                     return None
                 else:
                     raise e
+        except urllib.error.URLError as e:
+            st.error(f"**❌ 네트워크 오류**: 구글 시트에 연결할 수 없습니다. 인터넷 연결을 확인하세요.\n\n오류: {e}")
+            return None
+        except Exception as e:
+            error_msg = str(e)
+            if "401" in error_msg or "Unauthorized" in error_msg:
+                st.error("""
+                **❌ 구글 시트 접근 권한 오류 (401 Unauthorized)**
+                
+                **해결 방법:**
+                1. 구글 시트를 열어주세요: https://docs.google.com/spreadsheets/d/12C5nfRZVfakXGm6tWx9vbRmM36LtsjWBnQUR_VjAz2s
+                2. 우측 상단의 **"공유"** 버튼을 클릭하세요
+                3. **"링크가 있는 모든 사용자"** 또는 **"모든 사용자"**에게 **"뷰어"** 권한을 부여하세요
+                4. 설정 후 잠시 기다린 뒤 "데이터 새로고침" 버튼을 클릭하세요
+                
+                ⚠️ 시트가 비공개로 설정되어 있으면 CSV export가 작동하지 않습니다.
+                """)
+            else:
+                st.error(f"**❌ 구글 시트 데이터 로드 실패**: {error_msg}\n\n로컬 파일을 사용합니다.")
+            return None
         
-        if df.empty:
+        if df is None or df.empty:
             return None
         
         # 2. 구글 폼 헤더를 앱 내부 컬럼명으로 변경 (매핑)
@@ -240,26 +260,6 @@ def load_data_from_google_sheets():
             df['NO'] = range(1001, 1001 + len(df))
 
         return df
-    except urllib.error.URLError as e:
-        st.error(f"**❌ 네트워크 오류**: 구글 시트에 연결할 수 없습니다. 인터넷 연결을 확인하세요.\n\n오류: {e}")
-        return None
-    except Exception as e:
-        error_msg = str(e)
-        if "401" in error_msg or "Unauthorized" in error_msg:
-            st.error("""
-            **❌ 구글 시트 접근 권한 오류 (401 Unauthorized)**
-            
-            **해결 방법:**
-            1. 구글 시트를 열어주세요: https://docs.google.com/spreadsheets/d/1IsBdfSpLDAughGyjr2APO4_LxPWxC0Pbj0h4jTjyz5U
-            2. 우측 상단의 **"공유"** 버튼을 클릭하세요
-            3. **"링크가 있는 모든 사용자"** 또는 **"모든 사용자"**에게 **"뷰어"** 권한을 부여하세요
-            4. 설정 후 잠시 기다린 뒤 "데이터 새로고침" 버튼을 클릭하세요
-            
-            ⚠️ 시트가 비공개로 설정되어 있으면 CSV export가 작동하지 않습니다.
-            """)
-        else:
-            st.error(f"**❌ 구글 시트 데이터 로드 실패**: {error_msg}\n\n로컬 파일을 사용합니다.")
-        return None
 
 def create_backup_manual():
     """수동 백업 생성"""
