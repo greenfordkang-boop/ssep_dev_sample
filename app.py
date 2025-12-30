@@ -308,6 +308,28 @@ def load_sheet_as_dataframe_cached():
 
         df = pd.DataFrame(normalized, columns=[str(h).strip() for h in header])
 
+        # 중복 컬럼 제거 (공백 정규화 후 중복 제거)
+        # 예: "출하 장소"와 "출하장소" 중 하나만 유지
+        cols_to_remove = []
+        seen_cols = {}
+        
+        for col in df.columns:
+            col_normalized = str(col).strip().replace(" ", "")  # 공백 제거하여 비교
+            if col_normalized in seen_cols:
+                # 중복 발견: 나중에 나온 컬럼을 제거 대상으로 표시
+                cols_to_remove.append(col)
+            else:
+                seen_cols[col_normalized] = col
+        
+        # 중복 컬럼 제거
+        if cols_to_remove:
+            df = df.drop(columns=cols_to_remove)
+        
+        # 특정 중복 패턴 명시적 처리
+        # "출하 장소"와 "출하장소" 중 "출하 장소" (공백 포함) 제거
+        if "출하 장소" in df.columns and "출하장소" in df.columns:
+            df = df.drop(columns=["출하 장소"])
+
         # 기본 컬럼이 없으면 추가 (빈 값으로)
         for col in DEFAULT_COLUMNS:
             if col not in df.columns:
