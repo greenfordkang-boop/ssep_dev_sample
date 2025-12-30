@@ -160,6 +160,39 @@ def parse_date_safe(x):
     return None
 
 
+def sanitize_column_names_for_editor(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    st.data_editor 에 넣기 전에 컬럼 이름을 정리한다.
+    - 빈 컬럼명: '열1', '열2' ... 로 채움
+    - 중복 컬럼명: 두 번째부터는 '_2', '_3' suffix 를 붙여 유일하게 만듦
+    - 원본 df 는 수정하지 않고, 복사본을 리턴
+    """
+    original_cols = list(df.columns)
+    new_cols = []
+    seen = {}
+
+    for idx, col in enumerate(original_cols):
+        name = str(col).strip()
+
+        # 1) 비어있으면 '열{번호}' 로 채움
+        if not name:
+            name = f"열{idx + 1}"
+
+        # 2) 중복 방지
+        base = name
+        count = seen.get(base, 0)
+        if count > 0:
+            # 두 번째부터는 "_2", "_3" suffix
+            name = f"{base}_{count + 1}"
+        seen[base] = count + 1
+
+        new_cols.append(name)
+
+    df_fixed = df.copy()
+    df_fixed.columns = new_cols
+    return df_fixed
+
+
 def load_sheet_as_dataframe():
     """구글 시트 → DataFrame (데이터 자동 삭제 절대 안 함)"""
     try:
@@ -342,34 +375,51 @@ def main():
 
     # ----- 편집용 DF -----
     edit_df = df.copy()
+    
+    # 컬럼 이름 정리 (빈 컬럼명, 중복 컬럼명 처리)
+    # 원본 컬럼명 매핑 저장 (저장 시 복원용)
+    original_cols = list(edit_df.columns)
+    edit_df = sanitize_column_names_for_editor(edit_df)
+    sanitized_cols = list(edit_df.columns)
+    col_mapping = dict(zip(sanitized_cols, original_cols))  # 정리된 컬럼명 → 원본 컬럼명
+    st.session_state.col_mapping = col_mapping
 
     # 컬럼 설정
     column_config = {}
 
+    # 컬럼 설정 (정리된 컬럼명 기준으로 매핑)
+    # 원본 컬럼명과 정리된 컬럼명 매핑
+    reverse_mapping = {v: k for k, v in col_mapping.items()}  # 원본 → 정리된
+    
     # NO는 읽기 전용
-    if "NO" in edit_df.columns:
-        column_config["NO"] = st.column_config.NumberColumn("NO", format="%d", disabled=True)
+    if "NO" in reverse_mapping:
+        no_col = reverse_mapping["NO"]
+        column_config[no_col] = st.column_config.NumberColumn("NO", format="%d", disabled=True)
 
     # 날짜 컬럼
-    date_cols = ["접수일", "납기일", "도면접수일", "자재 요청일", "샘플 완료일", "출하일"]
-    for col in date_cols:
-        if col in edit_df.columns:
-            column_config[col] = st.column_config.DateColumn(col)
+    date_cols_original = ["접수일", "납기일", "도면접수일", "자재 요청일", "샘플 완료일", "출하일"]
+    for original_col in date_cols_original:
+        if original_col in reverse_mapping:
+            date_col = reverse_mapping[original_col]
+            column_config[date_col] = st.column_config.DateColumn(original_col)
 
     # 운송편: SelectboxColumn (항공/선박/핸드캐리만 선택 가능)
-    if "운송편" in edit_df.columns:
-        column_config["운송편"] = st.column_config.SelectboxColumn(
+    if "운송편" in reverse_mapping:
+        transport_col = reverse_mapping["운송편"]
+        column_config[transport_col] = st.column_config.SelectboxColumn(
             "운송편",
             options=["", "항공", "선박", "핸드캐리"],
             required=False,
         )
 
     # 숫자 컬럼 포맷 (천단위 콤마)
-    if qty_col and qty_col in edit_df.columns:
-        column_config[qty_col] = st.column_config.NumberColumn(qty_col, format="%,d")
-    for c in price_cols:
-        if c in edit_df.columns:
-            column_config[c] = st.column_config.NumberColumn(c, format="%,.0f")
+    if qty_col and qty_col in reverse_mapping:
+        qty_col_sanitized = reverse_mapping[qty_col]
+        column_config[qty_col_sanitized] = st.column_config.NumberColumn(qty_col, format="%,d")
+    for price_col in price_cols:
+        if price_col in reverse_mapping:
+            price_col_sanitized = reverse_mapping[price_col]
+            column_config[price_col_sanitized] = st.column_config.NumberColumn(price_col, format="%,.0f")
 
     # 데이터 에디터
     edited_df = st.data_editor(
@@ -387,6 +437,11 @@ def main():
 
     with btn1:
         if st.button("💾 변경 내용 저장", type="primary", use_container_width=True):
+            # 정리된 컬럼명을 원본 컬럼명으로 복원
+            col_mapping = st.session_state.get("col_mapping", {})
+            if col_mapping:
+                edited_df.columns = [col_mapping.get(col, col) for col in edited_df.columns]
+            
             # 운송편 값 정리 (옵션 외 값은 그대로 유지)
             if "운송편" in edited_df.columns:
                 valid_opts = {"", "항공", "선박", "핸드캐리"}
