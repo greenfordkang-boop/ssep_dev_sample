@@ -108,15 +108,31 @@ def get_gspread_client():
         client = gspread.authorize(creds)
         return client
     except Exception as e:
-        st.error(f"❌ gspread 클라이언트 초기화 실패: {e}")
+        error_msg = str(e)
+        if "429" in error_msg or "Quota exceeded" in error_msg or "quota" in error_msg.lower():
+            st.error("""
+            ⚠️ **Google Sheets API 할당량 초과**
+            
+            API 호출이 너무 많아 일시적으로 차단되었습니다.
+            
+            **해결 방법:**
+            1. 잠시 기다린 후 (1-2분) 다시 시도하세요
+            2. "🔄 구글 시트에서 다시 불러오기" 버튼을 자주 누르지 마세요
+            3. 데이터를 수정한 후에는 "💾 변경 내용 저장" 버튼만 사용하세요
+            
+            **참고:** Google Sheets API는 분당 읽기 요청 수에 제한이 있습니다.
+            """)
+        else:
+            st.error(f"❌ gspread 클라이언트 초기화 실패: {e}")
         st.stop()
 
 
 # ================================
 # 시트 선택 / 로드 / 저장
 # ================================
+@st.cache_resource(ttl=300)  # 5분간 캐시
 def pick_worksheet():
-    """시트 탭 선택 (자동 탐색 또는 지정된 탭)"""
+    """시트 탭 선택 (자동 탐색 또는 지정된 탭) - 캐시 적용"""
     try:
         client = get_gspread_client()
         sh = client.open_by_key(SHEET_ID)
@@ -143,7 +159,22 @@ def pick_worksheet():
         # 3) 첫 번째 탭 사용
         return sh.sheet1
     except Exception as e:
-        st.error(f"❌ 시트 접근 실패: {e}")
+        error_msg = str(e)
+        if "429" in error_msg or "Quota exceeded" in error_msg or "quota" in error_msg.lower():
+            st.error("""
+            ⚠️ **Google Sheets API 할당량 초과**
+            
+            API 호출이 너무 많아 일시적으로 차단되었습니다.
+            
+            **해결 방법:**
+            1. 잠시 기다린 후 (1-2분) 다시 시도하세요
+            2. "🔄 구글 시트에서 다시 불러오기" 버튼을 자주 누르지 마세요
+            3. 데이터를 수정한 후에는 "💾 변경 내용 저장" 버튼만 사용하세요
+            
+            **참고:** Google Sheets API는 분당 읽기 요청 수에 제한이 있습니다.
+            """)
+        else:
+            st.error(f"❌ 시트 접근 실패: {e}")
         st.stop()
 
 
@@ -246,8 +277,9 @@ def sanitize_column_names_for_editor(df: pd.DataFrame) -> pd.DataFrame:
     return df_fixed
 
 
-def load_sheet_as_dataframe():
-    """구글 시트 → DataFrame (데이터 자동 삭제 절대 안 함)"""
+@st.cache_data(ttl=60)  # 1분간 캐시 (데이터는 자주 변경될 수 있으므로 짧게)
+def load_sheet_as_dataframe_cached():
+    """구글 시트 → DataFrame (캐시 적용)"""
     try:
         ws = pick_worksheet()
         values = ws.get_all_values()
@@ -333,8 +365,26 @@ def load_sheet_as_dataframe():
 
         return df, ws
     except Exception as e:
-        st.error(f"❌ 데이터 로드 실패: {e}")
+        error_msg = str(e)
+        if "429" in error_msg or "Quota exceeded" in error_msg or "quota" in error_msg.lower():
+            st.error("""
+            ⚠️ **Google Sheets API 할당량 초과**
+            
+            데이터를 불러오는 중 API 호출 제한에 걸렸습니다.
+            
+            **해결 방법:**
+            1. 잠시 기다린 후 (1-2분) "🔄 구글 시트에서 다시 불러오기" 버튼을 클릭하세요
+            2. 너무 자주 새로고침하지 마세요
+            3. 세션 상태에 저장된 데이터를 계속 사용할 수 있습니다
+            """)
+        else:
+            st.error(f"❌ 데이터 로드 실패: {e}")
         return pd.DataFrame(columns=DEFAULT_COLUMNS), None
+
+
+def load_sheet_as_dataframe():
+    """구글 시트 → DataFrame (캐시 래퍼)"""
+    return load_sheet_as_dataframe_cached()
 
 
 def save_dataframe_to_sheet(df: pd.DataFrame, ws):
@@ -374,15 +424,33 @@ def save_dataframe_to_sheet(df: pd.DataFrame, ws):
 def main():
     st.title("🏭 신성EP 샘플 관리 대장")
 
-    # 데이터 로드
+    # 데이터 로드 (세션 상태 우선 사용, API 호출 최소화)
     if "df" not in st.session_state or "ws_title" not in st.session_state:
-        df, ws = load_sheet_as_dataframe()
-        st.session_state.df = df
-        st.session_state.ws_title = ws.title if ws else ""
-        st.session_state.ws = ws
+        try:
+            df, ws = load_sheet_as_dataframe()
+            st.session_state.df = df
+            st.session_state.ws_title = ws.title if ws else ""
+            st.session_state.ws = ws
+        except Exception as e:
+            # API 오류 시 기존 세션 데이터 사용
+            if "df" in st.session_state:
+                df = st.session_state.df
+                ws = st.session_state.get("ws")
+                st.warning("⚠️ 최신 데이터를 불러올 수 없습니다. 기존 데이터를 표시합니다.")
+            else:
+                error_msg = str(e)
+                if "429" in error_msg or "Quota exceeded" in error_msg:
+                    st.error("""
+                    ⚠️ **API 할당량 초과**
+                    
+                    처음 로드 시 API 제한에 걸렸습니다. 1-2분 후 페이지를 새로고침하세요.
+                    """)
+                else:
+                    st.error(f"❌ 데이터를 불러올 수 없습니다: {e}")
+                st.stop()
     else:
         df = st.session_state.df
-        ws = st.session_state.get("ws") or pick_worksheet()
+        ws = st.session_state.get("ws")
 
     st.caption(f"현재 연결된 시트 ID: {SHEET_ID}, 탭: {st.session_state.ws_title}")
     st.caption(f"로드된 데이터: {len(df)}행, {len(df.columns)}개 컬럼")
@@ -576,12 +644,27 @@ def main():
 
     with btn2:
         if st.button("🔄 구글 시트에서 다시 불러오기", use_container_width=True):
-            new_df, new_ws = load_sheet_as_dataframe()
-            st.session_state.df = new_df
-            st.session_state.ws_title = new_ws.title if new_ws else ""
-            st.session_state.ws = new_ws
-            st.success("🔄 최신 데이터를 다시 불러왔습니다.")
-            st.rerun()
+            try:
+                # 캐시 무효화 후 다시 로드
+                load_sheet_as_dataframe_cached.clear()
+                pick_worksheet.clear()
+                new_df, new_ws = load_sheet_as_dataframe()
+                st.session_state.df = new_df
+                st.session_state.ws_title = new_ws.title if new_ws else ""
+                st.session_state.ws = new_ws
+                st.success("🔄 최신 데이터를 다시 불러왔습니다.")
+                st.rerun()
+            except Exception as e:
+                error_msg = str(e)
+                if "429" in error_msg or "Quota exceeded" in error_msg or "quota" in error_msg.lower():
+                    st.error("""
+                    ⚠️ **API 할당량 초과**
+                    
+                    너무 자주 새로고침하셨습니다. 1-2분 후 다시 시도해주세요.
+                    현재 세션에 저장된 데이터를 계속 사용할 수 있습니다.
+                    """)
+                else:
+                    st.error(f"❌ 데이터 불러오기 실패: {e}")
 
 
 if __name__ == "__main__":
