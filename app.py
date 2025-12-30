@@ -166,6 +166,7 @@ def sanitize_column_names_for_editor(df: pd.DataFrame) -> pd.DataFrame:
     - 빈 컬럼명: '열1', '열2' ... 로 채움
     - 중복 컬럼명: 두 번째부터는 '_2', '_3' suffix 를 붙여 유일하게 만듦
     - 원본 df 는 수정하지 않고, 복사본을 리턴
+    - Streamlit이 허용하지 않는 특수 문자 제거
     """
     original_cols = list(df.columns)
     new_cols = []
@@ -175,10 +176,15 @@ def sanitize_column_names_for_editor(df: pd.DataFrame) -> pd.DataFrame:
         name = str(col).strip()
 
         # 1) 비어있으면 '열{번호}' 로 채움
-        if not name:
+        if not name or name == "":
             name = f"열{idx + 1}"
 
-        # 2) 중복 방지
+        # 2) Streamlit이 허용하지 않는 문자 제거 (줄바꿈, 탭 등)
+        name = name.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+        # 연속된 공백을 하나로
+        name = " ".join(name.split())
+
+        # 3) 중복 방지
         base = name
         count = seen.get(base, 0)
         if count > 0:
@@ -186,10 +192,57 @@ def sanitize_column_names_for_editor(df: pd.DataFrame) -> pd.DataFrame:
             name = f"{base}_{count + 1}"
         seen[base] = count + 1
 
+        # 4) 최종 검증: 여전히 비어있으면 강제로 이름 부여
+        if not name or name == "":
+            name = f"열{idx + 1}"
+
         new_cols.append(name)
 
     df_fixed = df.copy()
     df_fixed.columns = new_cols
+    
+    # 최종 검증: 모든 컬럼명이 유일하고 비어있지 않은지 확인
+    if len(new_cols) != len(set(new_cols)):
+        # 중복이 있으면 다시 처리
+        seen_final = {}
+        final_cols = []
+        for col in new_cols:
+            base = str(col).strip()
+            if not base or base == "":
+                base = f"열{len(final_cols) + 1}"
+            count = seen_final.get(base, 0)
+            if count > 0:
+                col = f"{base}_{count + 1}"
+            else:
+                col = base
+            seen_final[base] = count + 1
+            final_cols.append(col)
+        df_fixed.columns = final_cols
+        new_cols = final_cols
+    
+    # 최종 검증: 빈 컬럼명이 있는지 확인 및 수정
+    final_cols_list = list(df_fixed.columns)
+    for i, col in enumerate(final_cols_list):
+        col_str = str(col).strip()
+        if not col_str or col_str == "" or col_str.lower() in ['nan', 'none', 'n/a']:
+            final_cols_list[i] = f"열{i + 1}"
+    df_fixed.columns = final_cols_list
+    
+    # 최종 검증: 중복이 여전히 있는지 확인
+    if len(df_fixed.columns) != len(set(df_fixed.columns)):
+        # 중복이 있으면 인덱스 기반으로 강제 고유화
+        final_unique_cols = []
+        seen_unique = {}
+        for i, col in enumerate(df_fixed.columns):
+            col_str = str(col).strip()
+            if not col_str or col_str == "":
+                col_str = f"열{i + 1}"
+            if col_str in seen_unique:
+                col_str = f"{col_str}_{i}"
+            seen_unique[col_str] = True
+            final_unique_cols.append(col_str)
+        df_fixed.columns = final_unique_cols
+    
     return df_fixed
 
 
@@ -421,6 +474,34 @@ def main():
             price_col_sanitized = reverse_mapping[price_col]
             column_config[price_col_sanitized] = st.column_config.NumberColumn(price_col, format="%,.0f")
 
+    # 데이터 에디터 전 최종 검증
+    # 컬럼명이 비어있거나 중복되지 않았는지 확인
+    if not edit_df.empty:
+        cols = list(edit_df.columns)
+        # 빈 컬럼명 체크
+        empty_cols = [i for i, c in enumerate(cols) if not str(c).strip() or str(c).strip() == ""]
+        if empty_cols:
+            st.error(f"⚠️ 빈 컬럼명 감지 (인덱스: {empty_cols}). 자동 수정합니다.")
+            for i in empty_cols:
+                edit_df.columns.values[i] = f"열{i + 1}"
+        
+        # 중복 컬럼명 체크
+        if len(cols) != len(set(cols)):
+            duplicates = [c for c in cols if cols.count(c) > 1]
+            st.error(f"⚠️ 컬럼명 중복 감지: {set(duplicates)}. 자동 수정합니다.")
+            # 중복 제거
+            seen_dup = {}
+            new_cols_dup = []
+            for i, col in enumerate(edit_df.columns):
+                col_str = str(col).strip()
+                if not col_str or col_str == "":
+                    col_str = f"열{i + 1}"
+                if col_str in seen_dup:
+                    col_str = f"{col_str}_{i}"
+                seen_dup[col_str] = True
+                new_cols_dup.append(col_str)
+            edit_df.columns = new_cols_dup
+    
     # 데이터 에디터
     edited_df = st.data_editor(
         edit_df,
