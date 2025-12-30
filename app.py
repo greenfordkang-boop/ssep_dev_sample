@@ -266,6 +266,28 @@ def load_data_from_google_sheets():
         elif '타임스탬프' in df.columns:
             df['접수일'] = df['타임스탬프']
         
+        # 디버깅: 실제 로드된 컬럼명 표시 (항상 표시)
+        st.info(f"📊 로드된 데이터: {len(df)}개 행, {len(df.columns)}개 컬럼")
+        with st.expander("🔍 디버깅: 로드된 컬럼명 확인", expanded=True):
+            st.write(f"**총 {len(df.columns)}개 컬럼:**")
+            st.code(", ".join(list(df.columns)), language=None)
+            if not df.empty:
+                st.write(f"**첫 번째 행 샘플 데이터 (원본):**")
+                st.json(df.iloc[0].to_dict())
+                # 업체명, 품명, 접수일 관련 컬럼 찾기
+                st.write("**관련 컬럼 검색:**")
+                related_cols = {
+                    '업체명 관련': [col for col in df.columns if '업체' in str(col) or '회사' in str(col)],
+                    '품명 관련': [col for col in df.columns if '품' in str(col) or '품목' in str(col)],
+                    '접수일 관련': [col for col in df.columns if '일' in str(col) or '날짜' in str(col) or '타임스탬프' in str(col)],
+                    '수량 관련': [col for col in df.columns if '수량' in str(col) or 'Quantity' in str(col)],
+                }
+                for key, cols in related_cols.items():
+                    if cols:
+                        st.write(f"- {key}: {', '.join(cols)}")
+                    else:
+                        st.write(f"- {key}: 없음")
+        
         # 컬럼 매핑 (구글 폼 헤더 → 내부 컬럼명)
         rename_map = {
             '업체명 입력': '업체명',
@@ -280,7 +302,18 @@ def load_data_from_google_sheets():
             '담당자 성함': '담당자',
             '품목명': '품명',
             '납기희망일': '납기일',
-            '요청사항 및 비고': '요청사항'
+            '요청사항 및 비고': '요청사항',
+            # 추가 매핑 (다양한 변형 대응)
+            '업체명': '업체명',
+            '담당자': '담당자',
+            '품명': '품명',
+            '요청수량': '요청수량',
+            '납기일': '납기일',
+            '요청사항': '요청사항',
+            '비고': '요청사항',
+            '타임스탬프': '접수일',
+            '신청일자': '접수일',
+            '등록일': '접수일'
         }
         df = df.rename(columns=rename_map)
         
@@ -333,7 +366,29 @@ def load_data_from_google_sheets():
             )
         
         # 데이터 클리닝 적용 (불필요한 컬럼 및 텅 빈 행 제거)
+        df_before_clean = df.copy()
         df = clean_dataframe(df)
+        
+        # 디버깅: 클리닝 전후 비교
+        if len(df) < len(df_before_clean):
+            st.info(f"⚠️ 클리닝 과정에서 {len(df_before_clean) - len(df)}개 행이 제거되었습니다. (원본: {len(df_before_clean)}개 → 클리닝 후: {len(df)}개)")
+        
+        # 디버깅: 매핑 후 컬럼명 확인
+        with st.expander("🔍 디버깅: 매핑 후 컬럼명 확인", expanded=True):
+            st.write(f"**매핑 후 컬럼명:**")
+            st.code(", ".join(list(df.columns)), language=None)
+            if not df.empty:
+                st.write(f"**매핑 후 첫 번째 행 샘플:**")
+                st.json(df.iloc[0].to_dict())
+                # 핵심 필드 확인
+                st.write("**핵심 필드 값 확인:**")
+                key_fields = ['NO', '접수일', '업체명', '품명', '요청수량', '납기일', '진행상태']
+                for field in key_fields:
+                    if field in df.columns:
+                        val = df.iloc[0].get(field, '')
+                        st.write(f"- {field}: `{val}` (타입: {type(val).__name__})")
+                    else:
+                        st.write(f"- {field}: ❌ 컬럼 없음")
     
     return df if df is not None and not df.empty else None
 
@@ -421,7 +476,18 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
                     return False
                 
                 # 핵심 컬럼에 값이 있는 행만 유지
-                mask = df.apply(has_any_value, axis=1)
+                # 단, NO가 있고 진행상태가 '접수'인 행은 유지 (새로 접수된 데이터일 수 있음)
+                def should_keep_row(row):
+                    # 진행상태가 '접수'인 경우 유지
+                    if '진행상태' in row.index:
+                        진행상태_val = row.get('진행상태', '')
+                        if pd.notnull(진행상태_val) and str(진행상태_val).strip() == '접수':
+                            return True
+                    # 핵심 컬럼에 값이 있는 경우 유지
+                    return has_any_value(row)
+                
+                # should_keep_row 함수로 필터링
+                mask = df.apply(should_keep_row, axis=1)
                 df = df[mask].copy()
                 # 인덱스 재설정
                 df = df.reset_index(drop=True)
