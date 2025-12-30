@@ -494,6 +494,54 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
+def apply_edited_changes(filtered_df: pd.DataFrame, edited_df: pd.DataFrame):
+    """
+    메인 테이블에서 편집된 내용을 st.session_state.df 와 구글 시트에 반영한다.
+    """
+    edited_df_clean = edited_df.copy()
+    if edited_df_clean.empty:
+        return
+    
+    # 전체 DF에서 현재 필터링된 부분만 업데이트
+    for index, row in edited_df_clean.iterrows():
+        # 원본 데이터프레임의 해당 NO를 가진 행 업데이트
+        if 'NO' in row:
+            idx = st.session_state.df[st.session_state.df['NO'] == row['NO']].index
+        else:
+            # NO가 없으면 인덱스로 찾기
+            idx = st.session_state.df.index[st.session_state.df.index == index]
+        
+        if not idx.empty:
+            # 날짜 타입 유지
+            date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
+            for col in date_columns:
+                if col in row and isinstance(row[col], str) and row[col]:
+                    try:
+                        row[col] = pd.to_datetime(row[col], errors='coerce').date()
+                    except:
+                        pass
+            
+            # 진행상태가 변경된 경우 관련 필드 자동 업데이트
+            if '진행상태' in row and '진행상태' in st.session_state.df.columns:
+                original_status = st.session_state.df.loc[idx[0], '진행상태']
+                new_status = row.get('진행상태')
+                if original_status != new_status:
+                    if new_status == "출하완료":
+                        if pd.isna(st.session_state.df.loc[idx[0], '출하일']) or st.session_state.df.loc[idx[0], '출하일'] == "":
+                            row['출하일'] = datetime.date.today()
+                    elif new_status == "생산중":
+                        if pd.isna(st.session_state.df.loc[idx[0], '샘플 완료일']) or st.session_state.df.loc[idx[0], '샘플 완료일'] == "":
+                            row['샘플 완료일'] = datetime.date.today()
+                    elif new_status == "자재준비중":
+                        if pd.isna(st.session_state.df.loc[idx[0], '자재준비']) or st.session_state.df.loc[idx[0], '자재준비'] == "":
+                            row['자재준비'] = "진행중"
+            
+            st.session_state.df.loc[idx[0]] = row
+    
+    # 진행상태 업데이트
+    st.session_state.df = update_progress_status(st.session_state.df)
+    save_data()
+
 def convert_dataframe_types(df):
     """데이터프레임의 타입 변환 (공통 함수)"""
     if df.empty:
@@ -1024,7 +1072,7 @@ def main_app():
         
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("총 주문 건수", f"{total_orders}건", help=f"필터링된 데이터{selected_info} 기준" if selected_info else "필터링된 데이터 기준")
-        c2.metric("총 요청 수량", f"{int(total_qty)} EA", help=f"필터링된 데이터{selected_info} 기준" if selected_info else "필터링된 데이터 기준")
+        c2.metric("총 요청 수량", f"{int(total_qty):,} EA", help=f"필터링된 데이터{selected_info} 기준" if selected_info else "필터링된 데이터 기준")
         c3.metric("완료 건수", f"{completed_count}건", help=f"필터링된 데이터{selected_info} 기준" if selected_info else "필터링된 데이터 기준")
         c4.metric("납기 지연", f"{delayed_count}건", delta_color="inverse", delta=f"{delayed_count}건" if delayed_count > 0 else None, help=f"필터링된 데이터{selected_info} 기준" if selected_info else "필터링된 데이터 기준")
         c5.metric("완료율", f"{completion_rate}%", help=f"필터링된 데이터{selected_info} 기준" if selected_info else "필터링된 데이터 기준")
@@ -1250,17 +1298,21 @@ def main_app():
                 "품번": st.column_config.TextColumn("품번"),
                 "품명": st.column_config.TextColumn("품명"),
                 "출하장소": st.column_config.TextColumn("출하장소"),
-                "요청수량": st.column_config.NumberColumn("요청수량", format="%d"),
+                "요청수량": st.column_config.NumberColumn("요청수량", format="%,d"),
                 "납기일": st.column_config.DateColumn("납기일"),
-                "샘플단가": st.column_config.NumberColumn("샘플단가", format="%.0f"),
-                "샘플금액": st.column_config.NumberColumn("샘플금액", format="%.0f"),
+                "샘플단가": st.column_config.NumberColumn("샘플단가", format="%,.0f"),
+                "샘플금액": st.column_config.NumberColumn("샘플금액", format="%,.0f"),
                 "요청사항": st.column_config.TextColumn("요청사항"),
                 "도면접수일": st.column_config.DateColumn("도면접수일"),
                 "자재 요청일": st.column_config.DateColumn("자재 요청일"),
                 "자재준비": st.column_config.TextColumn("자재준비"),
                 "샘플 완료일": st.column_config.DateColumn("샘플 완료일"),
                 "출하일": st.column_config.DateColumn("출하일"),
-                "운송편": st.column_config.TextColumn("운송편"),
+                "운송편": st.column_config.SelectboxColumn(
+                    "운송편",
+                    options=["", "항공", "선박", "핸드캐리"],
+                    required=False
+                ),
                 "비고": st.column_config.TextColumn("비고"),
                 "진행상태": st.column_config.SelectboxColumn(
                     "진행상태",
@@ -1337,53 +1389,13 @@ def main_app():
                 st.rerun()
         
         # 선택 컬럼 제거하여 나머지 처리
-        edited_df = edited_df.drop(columns=['선택']) if '선택' in edited_df.columns else edited_df
+        edited_df_no_select = edited_df.drop(columns=['선택']) if '선택' in edited_df.columns else edited_df
         
-        # [변경 사항 저장 로직]
-        # st.data_editor는 session_state의 df를 직접 수정하지 않고 수정된 복사본을 리턴함
-        # 따라서 원본 df를 업데이트하는 로직이 필요
-        # 선택 컬럼을 제거한 후 비교
-        edited_df_clean = edited_df.copy()
-        if not edited_df_clean.equals(filtered_df):
-            # 전체 DF에서 현재 필터링된 부분만 업데이트
-            for index, row in edited_df_clean.iterrows():
-                # 원본 데이터프레임의 해당 NO를 가진 행 업데이트
-                if 'NO' in row:
-                    idx = st.session_state.df[st.session_state.df['NO'] == row['NO']].index
-                else:
-                    # NO가 없으면 인덱스로 찾기
-                    idx = st.session_state.df.index[st.session_state.df.index == index]
-                
-                if not idx.empty:
-                    # 날짜 타입 유지
-                    date_columns = ['접수일', '납기일', '도면접수일', '자재 요청일', '샘플 완료일', '출하일']
-                    for col in date_columns:
-                        if col in row and isinstance(row[col], str) and row[col]:
-                            try:
-                                row[col] = pd.to_datetime(row[col], errors='coerce').date()
-                            except:
-                                pass
-                    
-                    # 진행상태가 변경된 경우 관련 필드 자동 업데이트
-                    if '진행상태' in row and '진행상태' in st.session_state.df.columns:
-                        original_status = st.session_state.df.loc[idx[0], '진행상태']
-                        new_status = row.get('진행상태')
-                        if original_status != new_status:
-                            if new_status == "출하완료":
-                                if pd.isna(st.session_state.df.loc[idx[0], '출하일']) or st.session_state.df.loc[idx[0], '출하일'] == "":
-                                    row['출하일'] = datetime.date.today()
-                            elif new_status == "생산중":
-                                if pd.isna(st.session_state.df.loc[idx[0], '샘플 완료일']) or st.session_state.df.loc[idx[0], '샘플 완료일'] == "":
-                                    row['샘플 완료일'] = datetime.date.today()
-                            elif new_status == "자재준비중":
-                                if pd.isna(st.session_state.df.loc[idx[0], '자재준비']) or st.session_state.df.loc[idx[0], '자재준비'] == "":
-                                    row['자재준비'] = "진행중"
-                    
-                    st.session_state.df.loc[idx[0]] = row
-            # 진행상태 업데이트
-            st.session_state.df = update_progress_status(st.session_state.df)
-            save_data()
-            # toast는 save_data() 내부에서 표시되므로 여기서는 제거
+        # 💾 변경 사항 저장 버튼
+        if st.button("💾 변경 내용 저장", key="save_main_table"):
+            apply_edited_changes(filtered_df, edited_df_no_select)
+            st.success("변경 내용이 저장되었습니다.")
+            st.rerun()
 
         # [엑셀 다운로드 및 업로드]
         st.divider()
