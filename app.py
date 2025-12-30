@@ -214,6 +214,9 @@ def load_data_from_google_sheets():
         spreadsheet = gc.open_by_key(SHEET_ID)
         worksheet = spreadsheet.sheet1
         
+        # 현재 불러온 시트 탭 표시
+        st.caption(f"📄 현재 불러온 시트 탭: {worksheet.title}")
+        
         # 헤더 중복 문제를 해결하기 위해 get_all_values() 사용
         all_values = worksheet.get_all_values()
         
@@ -307,6 +310,27 @@ def load_data_from_google_sheets():
             
             # 최대값 + 1부터 시작
             df['NO'] = range(max_existing_no + 1, max_existing_no + 1 + len(df))
+        
+        # 컬럼 이름 안전 처리(앞뒤 공백 제거)
+        df.columns = df.columns.map(lambda x: str(x).strip())
+        
+        # 요청수량 컬럼 숫자로 변환 (문자 제거)
+        qty_col_candidates = ["요청수량", "수량", "RequestQty", "Quantity"]
+        qty_col = None
+        for c in qty_col_candidates:
+            if c in df.columns:
+                qty_col = c
+                break
+        
+        if qty_col:
+            df[qty_col] = (
+                df[qty_col]
+                .fillna(0)
+                .astype(str)
+                .str.replace(r"[^0-9]", "", regex=True)
+                .replace("", 0)
+                .astype(int)
+            )
         
         # 데이터 클리닝 적용 (불필요한 컬럼 및 텅 빈 행 제거)
         df = clean_dataframe(df)
@@ -836,6 +860,33 @@ def main_app():
             else:
                 dashboard_df = filtered_df[filtered_df.index.isin(st.session_state.selected_rows)]
         
+        # 집계용 df_valid 생성
+        df_valid = dashboard_df.copy()
+        
+        # NO 값 없는 행 제외
+        if "NO" in df_valid.columns:
+            df_valid = df_valid[df_valid["NO"].astype(str) != ""]
+        
+        # 접수일 없는 행 제외
+        for col in ["접수일", "신청일자", "등록일"]:
+            if col in df_valid.columns:
+                df_valid = df_valid[df_valid[col].astype(str) != ""]
+                break
+        
+        # 삭제 상태 제외
+        for col in ["상태", "진행상태"]:
+            if col in df_valid.columns:
+                df_valid = df_valid[~df_valid[col].astype(str).str.contains("삭제", na=False)]
+                break
+        
+        # 요청수량 컬럼 찾기
+        qty_col_candidates = ["요청수량", "수량", "RequestQty", "Quantity"]
+        qty_col = None
+        for c in qty_col_candidates:
+            if c in df_valid.columns:
+                qty_col = c
+                break
+        
         # [통계 대시보드] - 선택된 행이 있으면 선택된 행만, 없으면 필터링된 전체 데이터 기준으로 계산
         # 통계 계산용 변수 초기화
         total_orders = 0
@@ -844,14 +895,16 @@ def main_app():
         delayed_count = 0
         completion_rate = 0
         
-        if not dashboard_df.empty:
-            total_orders = len(dashboard_df)
-            # 요청수량을 숫자 타입으로 변환 후 합계 계산
-            if '요청수량' in dashboard_df.columns:
-                total_qty = pd.to_numeric(dashboard_df['요청수량'], errors='coerce').fillna(0).sum()
+        if not df_valid.empty:
+            total_orders = len(df_valid)
+            # 요청수량 합계 계산
+            if qty_col:
+                total_qty = df_valid[qty_col].sum()
+            else:
+                total_qty = 0
             # 출하일이 있는 건수로 완료 건수 계산 (더 정확한 체크)
-            if '출하일' in dashboard_df.columns:
-                for idx, row in dashboard_df.iterrows():
+            if '출하일' in df_valid.columns:
+                for idx, row in df_valid.iterrows():
                     출하일값 = row.get('출하일')
                     # 출하일이 None이 아니고, 빈 문자열이 아니고, NaN이 아닌 경우
                     if pd.notnull(출하일값) and 출하일값 is not None:
@@ -863,8 +916,8 @@ def main_app():
                             completed_count += 1
             # 납기일이 지난 건수 계산
             today = datetime.date.today()
-            if '납기일' in dashboard_df.columns:
-                for idx, row in dashboard_df.iterrows():
+            if '납기일' in df_valid.columns:
+                for idx, row in df_valid.iterrows():
                     납기일값 = row.get('납기일')
                     출하일값 = row.get('출하일')
                     
@@ -899,6 +952,9 @@ def main_app():
         if st.session_state.selected_rows:
             selected_count = len(st.session_state.selected_rows)
             selected_info = f" (선택된 {selected_count}건 기준)"
+        
+        # 디버그 정보 표시
+        st.caption(f"현재 집계 기준 데이터 수(df_valid): {len(df_valid)} / 원본 전체(df): {len(dashboard_df)}")
         
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("총 주문 건수", f"{total_orders}건", help=f"필터링된 데이터{selected_info} 기준" if selected_info else "필터링된 데이터 기준")
