@@ -541,13 +541,13 @@ def main():
             disabled=True,  # 자동 계산되므로 수정 불가
         )
     
-    # 납기일: 날짜 형식
+    # 납기일: 텍스트 형식 (날짜 입력 가능)
     if "납기일" in edit_df.columns:
-        column_config["납기일"] = st.column_config.DateColumn("납기일")
+        column_config["납기일"] = st.column_config.TextColumn("납기일", help="날짜 형식: YYYY-MM-DD 또는 YYYY.MM.DD")
     
-    # 납기일(예정): 날짜 형식, 관리자가 입력 가능
+    # 납기일(예정): 텍스트 형식, 관리자가 입력 가능
     if "납기일(예정)" in edit_df.columns:
-        column_config["납기일(예정)"] = st.column_config.DateColumn("납기일(예정)")
+        column_config["납기일(예정)"] = st.column_config.TextColumn("납기일(예정)", help="예상 납기일 입력 (날짜 형식: YYYY-MM-DD 또는 YYYY.MM.DD)")
 
     # 삭제 체크박스 컬럼
     if "_삭제" in edit_df.columns:
