@@ -309,28 +309,61 @@ def main():
     qty_col = "요청수량" if "요청수량" in df.columns else ("수량" if "수량" in df.columns else None)
     price_cols = [c for c in ["샘플단가", "샘플금액"] if c in df.columns]
 
-    c1, c2, c3, c4 = st.columns(4)
+    # ----- 제목 필터 (대시보드 집계용) -----
+    stats_df = df.copy()
+    if "제목" in stats_df.columns:
+        title_filter = st.text_input(
+            "제목 필터 (대시보드 집계용)",
+            key="title_filter",
+            placeholder="제목에 포함될 키워드를 입력하세요.",
+        )
+        if title_filter:
+            stats_df = stats_df[
+                stats_df["제목"].astype(str).str.contains(title_filter, case=False, na=False)
+            ].copy()
+
+    # ----- 상단 대시보드 -----
+    c1, c2, c3, c4, c5 = st.columns(5)
+
+    # 1) 총 샘플 건수
     with c1:
-        st.metric("총 샘플 건수", f"{len(df):,} 건")
+        st.metric("총 샘플 건수", f"{len(stats_df):,} 건")
+
+    # 2) 총 요청 수량
     with c2:
-        if qty_col:
-            total_qty = int(df[qty_col].fillna(0).sum())
+        if qty_col and qty_col in stats_df.columns:
+            total_qty = int(stats_df[qty_col].fillna(0).sum())
             st.metric("총 요청 수량", f"{total_qty:,.0f} EA")
         else:
             st.metric("총 요청 수량", "-")
+
+    # 3) 출하완료 건수
     with c3:
         completed = 0
-        if "진행상태" in df.columns:
-            completed = (df["진행상태"].astype(str) == "출하완료").sum()
+        if "진행상태" in stats_df.columns:
+            completed = (stats_df["진행상태"].astype(str) == "출하완료").sum()
         st.metric("출하완료 건수", f"{completed:,} 건")
+
+    # 4) 미납 건수 (= 전체 - 출하완료)
     with c4:
+        pending = max(len(stats_df) - completed, 0)
+        st.metric("미납 건수", f"{pending:,} 건")
+
+    # 5) 완료율
+    with c5:
+        completion_rate = (completed / len(stats_df) * 100) if len(stats_df) > 0 else 0
+        st.metric("완료율", f"{completion_rate:,.1f} %")
+
+    # 납기 지연 건수 (기존 기능 유지, stats_df 기준)
+    d1, _, _, _, _ = st.columns(5)
+    with d1:
         delayed = 0
-        if "납기일" in df.columns:
+        if "납기일" in stats_df.columns:
             today = datetime.today().date()
-            dates = df["납기일"].apply(parse_date_safe)
+            dates = stats_df["납기일"].apply(parse_date_safe)
             mask = dates.notna()
-            if "진행상태" in df.columns:
-                not_done = df["진행상태"].astype(str) != "출하완료"
+            if "진행상태" in stats_df.columns:
+                not_done = stats_df["진행상태"].astype(str) != "출하완료"
                 delayed = ((dates < today) & mask & not_done).sum()
             else:
                 delayed = ((dates < today) & mask).sum()
@@ -339,24 +372,38 @@ def main():
     st.markdown("---")
     st.subheader("📋 샘플 목록 편집")
 
+
+    # 📋 샘플 목록 편집
     edit_df = df.copy()
     column_config = {}
 
+    # NO는 읽기 전용
     if "NO" in edit_df.columns:
         column_config["NO"] = st.column_config.NumberColumn("NO", disabled=True, format="%d")
 
+    # 수량 컬럼
     if qty_col and qty_col in edit_df.columns:
         column_config[qty_col] = st.column_config.NumberColumn(qty_col, format="%,d")
 
+    # 금액 컬럼
     for c in price_cols:
         column_config[c] = st.column_config.NumberColumn(c, format="%,.0f")
 
+    # 운송편 컬럼
     if "운송편" in edit_df.columns:
         column_config["운송편"] = st.column_config.SelectboxColumn(
             "운송편",
             options=["", "항공", "선박", "핸드캐리"],
             required=False,
         )
+
+    # ✅ 행 삭제용 체크박스 컬럼 (화면 전용, 저장 전에 제거)
+    if "_삭제" not in edit_df.columns:
+        edit_df["_삭제"] = False
+    column_config["_삭제"] = st.column_config.CheckboxColumn(
+        "삭제",
+        help="체크한 행은 저장 시 삭제됩니다.",
+    )
 
     edited_df = st.data_editor(
         edit_df,
@@ -369,6 +416,11 @@ def main():
     b1, b2 = st.columns(2)
     with b1:
         if st.button("💾 변경 내용 저장", type="primary"):
+            # 1) 삭제 체크된 행 제거
+            if "_삭제" in edited_df.columns:
+                edited_df = edited_df[~edited_df["_삭제"].fillna(False)].drop(columns=["_삭제"])
+
+            # 2) 운송편 값 정리 (기존 로직 유지)
             if "운송편" in edited_df.columns:
                 valid = {"", "항공", "선박", "핸드캐리"}
                 edited_df["운송편"] = edited_df["운송편"].fillna("")
@@ -376,6 +428,7 @@ def main():
                     lambda x: x if x in valid else str(x)
                 )
 
+            # 3) 수량/단가/금액 숫자 처리 (기존 로직 유지)
             if qty_col and qty_col in edited_df.columns:
                 edited_df[qty_col] = (
                     edited_df[qty_col]
@@ -395,13 +448,19 @@ def main():
                     .astype(int)
                 )
 
+            # 4) ✅ 출하일이 있으면 진행상태를 자동으로 '출하완료'로 세팅
+            if "출하일" in edited_df.columns and "진행상태" in edited_df.columns:
+                mask = edited_df["출하일"].astype(str).str.strip() != ""
+                edited_df.loc[mask, "진행상태"] = "출하완료"
+
+            # 5) 시트 저장
             ok = save_dataframe_to_sheet(edited_df, ws)
             if ok:
                 st.success("구글 시트에 저장되었습니다.")
 
     with b2:
         if st.button("🔄 시트 다시 불러오기"):
-            st.rerun()
+            st.rerun()  # ✅ 최신 버전 rerun
 
 if __name__ == "__main__":
     main()
