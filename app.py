@@ -9,29 +9,12 @@ st.set_page_config(page_title="신성EP 샘플 관리 대장", layout="wide")
 SHEET_ID = "1aHe7GQsPnZfMjZVPy4jt0elCEADKubWSSeonhZTKR9E"
 WORKSHEET_NAME = "Form_Responses 1"  # Google Form 실제 응답 탭 이름
 
-DEFAULT_COLUMNS = [
-    "NO",
-    "접수일",
-    "업체명",
-    "부서",
-    "담당자",
-    "차종",
-    "품번",
-    "품명",
-    "출하장소",
-    "요청수량",
-    "납기일",
-    "요청사항",
-    "도면접수일",
-    "자재 요청일",
-    "자재준비",
-    "샘플 완료일",
-    "출하일",
-    "운송편",
-    "비고",
-    "샘플단가",
-    "샘플금액",
-    "진행상태",
+# 1. 사용자가 요청한 정확한 순서 정의 
+COLUMN_ORDER = [
+    "NO", "타임스탬프", "신청일자", "업체명", "부서명", "성함", 
+    "차종(모델)", "품명", "part no", "요청수량", "납기일", 
+    "요청사항", "연락처", "이메일", "운송편", "비고", 
+    "샘플단가", "샘플금액"
 ]
 
 def get_credentials_info():
@@ -71,86 +54,48 @@ def load_sheet_as_dataframe():
     ws = get_worksheet()
     values = ws.get_all_values()
     
-    if not values:
-        # 시트가 완전히 비어있을 경우에만 기본값을 사용 (최소한의 안전장치)
-        df = pd.DataFrame(columns=["NO", "접수일", "업체명", "품명"]) 
-        return df, ws
+    if not values or len(values) < 1:
+        return pd.DataFrame(columns=COLUMN_ORDER), ws
 
-    # 2) 실제 헤더 행 찾기 (시트의 첫 번째 행을 헤더로 확정)
-    # 구글 시트가 맞다고 하셨으므로 첫 번째 행(values[0])을 컬럼명으로 사용합니다.
-    header = [str(h).strip() for h in values[0] if h] 
-    data_rows = values[1:]
+    # 구글 시트의 실제 첫 번째 행(헤더) 
+    raw_header = [str(h).strip() for h in values[0]]
+    raw_data = values[1:]
 
-    # 3) 데이터프레임 생성
-    df = pd.DataFrame(data_rows, columns=header)
+    # 일단 시트의 원래 순서대로 DF 생성
+    df = pd.DataFrame(raw_data, columns=raw_header)
 
-    # 4) NO 컬럼 자동 부여 (앱 내 관리용)
-    if "NO" in df.columns:
-        df["NO"] = range(1, len(df) + 1)
-    else:
-        df.insert(0, "NO", range(1, len(df) + 1))
+    # [핵심] 시트의 값이 정의한 순서에 맞게 들어가도록 재배치
+    # 시트에 없는 열은 빈 값으로 채우고, 있는 열은 COLUMN_ORDER 순서로 정렬함 
+    for col in COLUMN_ORDER:
+        if col not in df.columns:
+            df[col] = "" # 시트에 없는 열은 공백 처리
+            
+    # 정의된 순서대로 열 추출 (이 단계에서 값이 제목에 맞게 정렬됨)
+    df = df[COLUMN_ORDER].copy()
 
-    # 5) 숫자 컬럼(수량, 금액 등) 자동 변환 로직
-    # 시트의 제목열 이름에 맞춰서 필터링
-    for col in df.columns:
-        if any(keyword in col for keyword in ["수량", "단가", "금액", "가격"]):
-            df[col] = pd.to_numeric(df[col].astype(str).str.replace(r'[^0-9.-]', '', regex=True), errors='coerce').fillna(0).astype(int)
+    # NO 컬럼 부여 및 숫자형 데이터 정제 
+    df["NO"] = range(1, len(df) + 1)
+    
+    num_cols = ["요청수량", "샘플단가", "샘플금액"]
+    for col in num_cols:
+        if col in df.columns:
+            # 숫자가 아닌 문자 제거 후 정수 변환 
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace(r'[^0-9]', '', regex=True), errors='coerce').fillna(0).astype(int)
 
     return df, ws
 
 def save_dataframe_to_sheet(df: pd.DataFrame, ws):
-    """
-    개선된 저장 함수:
-    1. 데이터 타입을 보존 (숫자는 숫자로)
-    2. 불필요한 clear()를 피하고 batch_update를 고려
-    """
+    """저장 시에도 반드시 COLUMN_ORDER 순서를 유지하여 시트에 기록 """
     try:
-        # 1. 시트의 기존 헤더 위치 탐색 (기존 로직 유지)
-        values = ws.get_all_values()
-        header_idx = 0
-        for i, row in enumerate(values):
-            row_stripped = [str(c).strip() for c in row]
-            if "NO" in row_stripped and ("업체명" in row_stripped or "품명" in row_stripped):
-                header_idx = i
-                break
+        # 저장 전 최종 정렬 확인
+        df_to_save = df[COLUMN_ORDER].copy().fillna("")
         
-        # 2. 보존해야 할 상단 행(필터 등) 추출
-        preserved_rows = values[:header_idx]
-        
-        # 3. 저장할 데이터 준비 (NaN 처리 및 타입 최적화)
-        df_to_save = df.copy()
-        # 숫자로 변환 가능한 컬럼들 처리
-        num_cols = ["요청수량", "샘플단가", "샘플금액"]
-        for col in num_cols:
-            if col in df_to_save.columns:
-                df_to_save[col] = pd.to_numeric(df_to_save[col], errors='coerce').fillna(0)
-
-        # 날짜 컬럼 처리
-        date_cols = ["접수일", "납기일", "도면접수일", "자재 요청일", "샘플 완료일", "출하일"]
-        for col in date_cols:
-            if col in df_to_save.columns:
-                df_to_save[col] = df_to_save[col].apply(
-                    lambda x: x.strftime("%Y-%m-%d") if hasattr(x, 'strftime') and x is not None else str(x) if x else ""
-                )
-
-        # NaN을 빈 문자열로 변환
-        df_to_save = df_to_save.fillna("")
-
-        # 헤더와 데이터 결합
-        header = df_to_save.columns.tolist()
-        data_body = df_to_save.values.tolist()
-        
-        # 4. 전체 데이터 구성
-        final_output = preserved_rows + [header] + data_body
-        
-        # 5. [중요] clear() 후 바로 update() 하여 공백 시간을 최소화
+        # 시트 초기화 후 헤더와 데이터 쓰기 
         ws.clear()
-        if final_output:
-            ws.update('A1', final_output)
-        
+        ws.update('A1', [df_to_save.columns.tolist()] + df_to_save.values.tolist())
         return True
     except Exception as e:
-        st.error(f"데이터 정합성 오류 발생: {e}")
+        st.error(f"저장 중 오류 발생: {e}")
         return False
 
 def parse_date_safe(x):
