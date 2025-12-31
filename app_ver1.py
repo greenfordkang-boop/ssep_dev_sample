@@ -3,8 +3,6 @@ import pandas as pd
 import gspread
 from google.oauth2 import service_account
 from datetime import datetime
-import shutil
-import os
 
 st.set_page_config(page_title="신성EP 샘플 관리 대장", layout="wide")
 
@@ -49,7 +47,6 @@ def get_worksheet():
             ws = sh.worksheet(WORKSHEET_NAME)
         except gspread.WorksheetNotFound:
             ws = sh.add_worksheet(title=WORKSHEET_NAME, rows=1000, cols=30)
-            # 새 시트 생성 시 기본 헤더는 시트 구조에 맞게 설정
     else:
         ws = sh.sheet1
     return ws
@@ -68,67 +65,26 @@ def load_sheet_as_dataframe():
     # 2. 시트 원본 순서대로 데이터프레임을 생성합니다. 
     df = pd.DataFrame(raw_data, columns=raw_header)
 
-    # 3. [데이터 밀림 방지 로직] - COLUMN_ORDER에 정의된 모든 컬럼을 순서대로 보장
-    # 시트에 없는 열은 빈 값("")으로 생성하여 밀림을 방지합니다.
+    # 3. [데이터 밀림 방지 로직]
+    # COLUMN_ORDER에 정의된 이름이 시트에 있는지 확인하고, 있는 것만 순서대로 가져옵니다.
     for col in COLUMN_ORDER:
         if col not in df.columns:
-            df[col] = ""  # 시트에 없는 열은 빈 값으로 생성
+            df[col] = "" # 시트에 없는 열은 빈 값으로 생성하여 밀림을 방지합니다.
 
-    # 4. [중요] COLUMN_ORDER 순서로 엄격히 재배치 (데이터 밀림 완전 방지)
-    df_reordered = pd.DataFrame()
-    for col in COLUMN_ORDER:
-        if col in df.columns:
-            df_reordered[col] = df[col]
-        else:
-            df_reordered[col] = ""
-    df = df_reordered.copy()
+    # 4. 사용자가 요청한 COLUMN_ORDER 순서로 모든 열을 재배치합니다.
+    df = df[COLUMN_ORDER].copy()
 
-    # 5. NaN 값을 빈 문자열이나 0으로 정확히 처리
-    df = df.fillna("")
-    
-    # 6. [중요] 타입 충돌 방지 로직: 숫자 컬럼을 명시적으로 정수형으로 변환
+    # 5. [중요] 타입 충돌 방지 로직: 숫자 컬럼을 명시적으로 정수형으로 변환
     num_cols = ["요청수량", "샘플단가", "샘플금액"]
     for col in num_cols:
         if col in df.columns:
-            # 빈 문자열을 0으로 처리하고 정수 변환
+            # 숫자가 아닌 문자(공백 등)를 0으로 처리하고 정수 변환
             df[col] = pd.to_numeric(
                 df[col].astype(str).str.replace(r'[^0-9]', '', regex=True), 
                 errors='coerce'
             ).fillna(0).astype(int)
 
-    # 7. 샘플금액 자동 계산: 요청수량 * 샘플단가
-    if "요청수량" in df.columns and "샘플단가" in df.columns and "샘플금액" in df.columns:
-        df["샘플금액"] = (df["요청수량"] * df["샘플단가"]).astype(int)
-
-    # 8. 진행상태 자동 트리거 로직
-    if "진행상태" not in df.columns:
-        df["진행상태"] = ""
-    
-    # 진행상태 자동 설정 (우선순위: 출하일 > 샘플 완료일 > 자재준비 > 기본값)
-    for idx in df.index:
-        status = "접수"  # 기본값
-        
-        # 1순위: 출하일이 있으면 "출하완료"
-        if "출하일" in df.columns:
-            출하일값 = str(df.at[idx, "출하일"]).strip()
-            if 출하일값 and 출하일값 != "" and 출하일값.lower() != "nan":
-                status = "출하완료"
-            else:
-                # 2순위: 샘플 완료일이 있으면 "생산완료"
-                if "샘플 완료일" in df.columns:
-                    완료일값 = str(df.at[idx, "샘플 완료일"]).strip()
-                    if 완료일값 and 완료일값 != "" and 완료일값.lower() != "nan":
-                        status = "생산완료"
-                    else:
-                        # 3순위: 자재준비가 "완료"이면 "생산중"
-                        if "자재준비" in df.columns:
-                            자재준비값 = str(df.at[idx, "자재준비"]).strip()
-                            if 자재준비값 == "완료":
-                                status = "생산중"
-        
-        df.at[idx, "진행상태"] = status
-
-    # 9. NO(번호) 컬럼은 앱 전용이므로 맨 앞에 추가합니다. 
+    # 6. NO(번호) 컬럼은 앱 전용이므로 맨 앞에 추가합니다. 
     df.insert(0, "NO", range(1, len(df) + 1))
     df["NO"] = df["NO"].astype(int)
 
@@ -137,12 +93,24 @@ def load_sheet_as_dataframe():
 def save_dataframe_to_sheet(df: pd.DataFrame, ws):
     """저장 시 NO를 제외하고 COLUMN_ORDER 순서로 시트에 기록합니다."""
     try:
-        # NO 컬럼은 시트 저장용이 아니므로 제외합니다. 
-        to_save = df[COLUMN_ORDER].copy().fillna("")
+        # NO 컬럼 제거
+        df_to_save = df.copy()
+        if "NO" in df_to_save.columns:
+            df_to_save = df_to_save.drop(columns=["NO"])
         
-        ws.clear() # 기존 데이터를 지우고 새로 씁니다. 
-        # 헤더를 포함하여 한 번에 업데이트합니다. 
-        ws.update('A1', [to_save.columns.tolist()] + to_save.values.tolist())
+        # COLUMN_ORDER에 있는 컬럼만 선택
+        cols_to_save = [col for col in COLUMN_ORDER if col in df_to_save.columns]
+        df_to_save = df_to_save[cols_to_save]
+        
+        # 데이터를 문자열로 변환 (NaN은 빈 문자열로)
+        df_to_save = df_to_save.fillna("")
+        values = [df_to_save.columns.tolist()] + df_to_save.values.tolist()
+        
+        # 시트 업데이트
+        ws.clear()
+        if values:
+            ws.update('A1', values)
+        
         return True
     except Exception as e:
         st.error(f"구글 시트 저장 실패: {e}")
@@ -190,11 +158,10 @@ def drop_logical_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
 # 간단 로그인 시스템 ---------------------------------
 ADMIN_ID = "admin"
 ADMIN_PW = "1234"
-
 CLIENTS = {
     # 아이디: (비밀번호, 업체명)
     "infac": ("1234", "infac"),
-    "sample": ("1234", "sample"),  # 필요하면 나중에 추가 / 수정
+    "sample": ("1234", "sample"),
 }
 
 def require_login():
@@ -208,35 +175,6 @@ def require_login():
             st.markdown(f"**접속자:** {st.session_state.role}")
             if st.session_state.role == "고객사" and st.session_state.client_name:
                 st.markdown(f"**고객사:** {st.session_state.client_name}")
-            
-            st.markdown("---")
-            st.markdown("### 🔄 백업/복원")
-            
-            # 현재 상태를 백업 버전으로 저장
-            if st.button("💾 현재 상태 백업 (Ver1로 저장)", help="현재 app.py를 app_ver1.py로 백업합니다"):
-                try:
-                    if os.path.exists("app.py"):
-                        shutil.copy("app.py", "app_ver1.py")
-                        st.success("✅ 백업 완료: app_ver1.py에 저장되었습니다.")
-                    else:
-                        st.error("❌ app.py 파일을 찾을 수 없습니다.")
-                except Exception as e:
-                    st.error(f"❌ 백업 실패: {e}")
-            
-            # Ver1로 복원
-            if st.button("⏮️ Ver1로 복원", help="app_ver1.py를 app.py로 복원합니다"):
-                try:
-                    if os.path.exists("app_ver1.py"):
-                        shutil.copy("app_ver1.py", "app.py")
-                        st.success("✅ 복원 완료: app_ver1.py를 app.py로 복원했습니다.")
-                        st.info("⚠️ 페이지를 새로고침하거나 앱을 재시작해야 변경사항이 적용됩니다.")
-                    else:
-                        st.error("❌ app_ver1.py 파일을 찾을 수 없습니다.")
-                except Exception as e:
-                    st.error(f"❌ 복원 실패: {e}")
-            
-            st.markdown("---")
-            
             if st.button("로그아웃"):
                 st.session_state.logged_in = False
                 st.session_state.role = None
@@ -244,13 +182,12 @@ def require_login():
                 st.rerun()
         return
 
-    st.title("로그인")
+    st.title("🔐 신성EP 샘플 관리 시스템 로그인")
+    role = st.radio("역할 선택", ["관리자", "고객사"], horizontal=True, key="login_role")
+    user_id = st.text_input("아이디", key="login_id")
+    user_pw = st.text_input("비밀번호", type="password", key="login_pw")
 
-    role = st.radio("역할을 선택하세요", ["관리자", "고객사"], key="login_role")
-    user_id = st.text_input("아이디")
-    user_pw = st.text_input("비밀번호", type="password")
-
-    if st.button("로그인"):
+    if st.button("로그인", key="login_btn"):
         if role == "관리자":
             if user_id == ADMIN_ID and user_pw == ADMIN_PW:
                 st.session_state.logged_in = True
@@ -260,7 +197,7 @@ def require_login():
                 st.rerun()
             else:
                 st.error("관리자 아이디 또는 비밀번호가 올바르지 않습니다.")
-        else:
+        else:  # 고객사 로그인
             if user_id in CLIENTS and CLIENTS[user_id][0] == user_pw:
                 st.session_state.logged_in = True
                 st.session_state.role = "고객사"
@@ -322,7 +259,7 @@ def main():
 
     # 2) 총 요청 수량
     with c2:
-        if qty_col and qty_col in stats_df.columns:
+        if qty_col:
             total_qty = int(stats_df[qty_col].fillna(0).sum())
             st.metric("총 요청 수량", f"{total_qty:,.0f} EA")
         else:
@@ -335,17 +272,22 @@ def main():
             completed = (stats_df["진행상태"].astype(str) == "출하완료").sum()
         st.metric("출하완료 건수", f"{completed:,} 건")
 
-    # 4) 미납 건수 (= 전체 - 출하완료)
+    # 4) 미납 건수
     with c4:
-        pending = max(len(stats_df) - completed, 0)
+        pending = 0
+        if "진행상태" in stats_df.columns:
+            pending = (stats_df["진행상태"].astype(str) != "출하완료").sum()
         st.metric("미납 건수", f"{pending:,} 건")
 
     # 5) 완료율
     with c5:
-        completion_rate = (completed / len(stats_df) * 100) if len(stats_df) > 0 else 0
-        st.metric("완료율", f"{completion_rate:,.1f} %")
+        completion_rate = 0
+        if len(stats_df) > 0 and "진행상태" in stats_df.columns:
+            completed = (stats_df["진행상태"].astype(str) == "출하완료").sum()
+            completion_rate = (completed / len(stats_df)) * 100
+        st.metric("완료율", f"{completion_rate:.1f}%")
 
-    # 6) 납기 지연 건수 (같은 줄에 표시)
+    # 6) 납기 지연 건수
     with c6:
         delayed = 0
         if "납기일" in stats_df.columns:
@@ -360,16 +302,6 @@ def main():
         st.metric("납기 지연 건수", f"{delayed:,} 건")
 
     st.markdown("---")
-    
-    # 미출하건 필터 체크박스
-    filter_pending = st.checkbox("🚚 미출하건만 보기", key="filter_pending", help="진행상태가 '출하완료'가 아닌 건만 표시합니다")
-    
-    # 필터링 적용
-    if filter_pending:
-        if "진행상태" in df.columns:
-            df = df[df["진행상태"].astype(str) != "출하완료"].copy()
-            st.info(f"📊 미출하건 필터 적용: {len(df)}건 표시 중")
-    
     st.subheader("📋 샘플 목록 편집")
 
     # 2) 편집용 데이터 준비 (에디터에 보이는 게 기준)
@@ -395,48 +327,28 @@ def main():
     # 2. st.data_editor 설정 시 타입 명시
     column_config = {}
     
-    # NO 컬럼: 수정 불가
+    # NO 컬럼은 숫자형으로 인식하도록 명시
     if "NO" in edit_df.columns:
         column_config["NO"] = st.column_config.NumberColumn("NO", disabled=True, format="%d")
     
-    # 타임스탬프: 수정 불가
+    # 숫자 컬럼 설정 (여기서 타입이 맞지 않으면 에러 발생)
+    for c in ["요청수량", "샘플단가", "샘플금액"]:
+        if c in edit_df.columns:
+            if c == "요청수량":
+                column_config[c] = st.column_config.NumberColumn(c, format="%,d")
+            else:
+                column_config[c] = st.column_config.NumberColumn(c, format="%,.0f")
+    
+    # [해결포인트] 타임스탬프 등 문자열 컬럼은 명시적으로 TextColumn 설정
     if "타임스탬프" in edit_df.columns:
         column_config["타임스탬프"] = st.column_config.TextColumn("타임스탬프", disabled=True)
-    
-    # 요청수량: 숫자 형식
-    if "요청수량" in edit_df.columns:
-        column_config["요청수량"] = st.column_config.NumberColumn("요청수량", format="%,d")
-    
-    # 샘플단가: 천단위 콤마 형식
-    if "샘플단가" in edit_df.columns:
-        column_config["샘플단가"] = st.column_config.NumberColumn("샘플단가", format="#,###")
-    
-    # 샘플금액: 천단위 콤마 형식, 수정 불가 (자동 계산)
-    if "샘플금액" in edit_df.columns:
-        column_config["샘플금액"] = st.column_config.NumberColumn("샘플금액", format="#,###", disabled=True)
 
-    # 운송편: Selectbox
+    # 운송편 컬럼
     if "운송편" in edit_df.columns:
         column_config["운송편"] = st.column_config.SelectboxColumn(
             "운송편",
             options=["", "항공", "선박", "핸드캐리"],
             required=False,
-        )
-    
-    # 자재준비: Selectbox
-    if "자재준비" in edit_df.columns:
-        column_config["자재준비"] = st.column_config.SelectboxColumn(
-            "자재준비",
-            options=["", "준비중", "완료"],
-            required=False,
-        )
-    
-    # 진행상태: Selectbox, 수정 불가 권장 (자동 계산되므로)
-    if "진행상태" in edit_df.columns:
-        column_config["진행상태"] = st.column_config.SelectboxColumn(
-            "진행상태",
-            options=["접수", "자재준비", "생산중", "생산완료", "출하완료"],
-            disabled=True,  # 자동 계산되므로 수정 불가
         )
 
     # 삭제 체크박스 컬럼
@@ -465,7 +377,7 @@ def main():
             if "_삭제" in to_save.columns:
                 to_save = to_save[~to_save["_삭제"].fillna(False)].drop(columns=["_삭제"])
 
-            # 4-2) 운송편 값 정리
+            # 4-2) 운송편 값 정리 (기존 로직 유지)
             if "운송편" in to_save.columns:
                 valid = {"", "항공", "선박", "핸드캐리"}
                 to_save["운송편"] = to_save["운송편"].fillna("")
@@ -473,15 +385,7 @@ def main():
                     lambda x: x if x in valid else str(x)
                 )
 
-            # 4-3) 자재준비 값 정리
-            if "자재준비" in to_save.columns:
-                valid = {"", "준비중", "완료"}
-                to_save["자재준비"] = to_save["자재준비"].fillna("")
-                to_save["자재준비"] = to_save["자재준비"].apply(
-                    lambda x: x if x in valid else str(x)
-                )
-
-            # 4-4) 수량/단가 숫자 처리
+            # 4-3) 수량/단가/금액 숫자 처리 (기존 로직 유지)
             if qty_col and qty_col in to_save.columns:
                 to_save[qty_col] = (
                     to_save[qty_col]
@@ -491,9 +395,9 @@ def main():
                     .replace("", "0")
                     .astype(int)
                 )
-            if "샘플단가" in to_save.columns:
-                to_save["샘플단가"] = (
-                    to_save["샘플단가"]
+            for c in price_cols:
+                to_save[c] = (
+                    to_save[c]
                     .fillna(0)
                     .astype(str)
                     .str.replace(r"[^0-9\\-]", "", regex=True)
@@ -501,40 +405,15 @@ def main():
                     .astype(int)
                 )
 
-            # 4-5) 샘플금액 자동 재계산: 요청수량 * 샘플단가
-            if "요청수량" in to_save.columns and "샘플단가" in to_save.columns and "샘플금액" in to_save.columns:
-                to_save["샘플금액"] = (to_save["요청수량"] * to_save["샘플단가"]).astype(int)
+            # 4-4) 출하일 있으면 진행상태 자동 '출하완료'
+            if "출하일" in to_save.columns and "진행상태" in to_save.columns:
+                mask = to_save["출하일"].astype(str).str.strip() != ""
+                to_save.loc[mask, "진행상태"] = "출하완료"
 
-            # 4-6) 진행상태 자동 재계산 (우선순위: 출하일 > 샘플 완료일 > 자재준비 > 기본값)
-            if "진행상태" in to_save.columns:
-                for idx in to_save.index:
-                    status = "접수"  # 기본값
-                    
-                    # 1순위: 출하일이 있으면 "출하완료"
-                    if "출하일" in to_save.columns:
-                        출하일값 = str(to_save.at[idx, "출하일"]).strip()
-                        if 출하일값 and 출하일값 != "" and 출하일값.lower() != "nan":
-                            status = "출하완료"
-                        else:
-                            # 2순위: 샘플 완료일이 있으면 "생산완료"
-                            if "샘플 완료일" in to_save.columns:
-                                완료일값 = str(to_save.at[idx, "샘플 완료일"]).strip()
-                                if 완료일값 and 완료일값 != "" and 완료일값.lower() != "nan":
-                                    status = "생산완료"
-                                else:
-                                    # 3순위: 자재준비가 "완료"이면 "생산중"
-                                    if "자재준비" in to_save.columns:
-                                        자재준비값 = str(to_save.at[idx, "자재준비"]).strip()
-                                        if 자재준비값 == "완료":
-                                            status = "생산중"
-                    
-                    to_save.at[idx, "진행상태"] = status
-
-            # 4-7) 시트 저장
+            # 4-5) 시트 저장
             ok = save_dataframe_to_sheet(to_save, ws)
             if ok:
                 st.success("구글 시트에 저장되었습니다.")
-                st.rerun()
 
     with b2:
         if st.button("🔄 시트 다시 불러오기"):
@@ -542,3 +421,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
