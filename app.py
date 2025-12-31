@@ -83,18 +83,19 @@ def load_sheet_as_dataframe():
             df_reordered[col] = ""
     df = df_reordered.copy()
 
-    # 5. NaN 값을 빈 문자열이나 0으로 정확히 처리
-    df = df.fillna("")
-    
-    # 6. [중요] 타입 충돌 방지 로직: 숫자 컬럼을 명시적으로 정수형으로 변환
+    # 5. [중요] 숫자 컬럼을 먼저 변환 (fillna 전에 처리하여 타입 유지)
     num_cols = ["요청수량", "샘플단가", "샘플금액"]
     for col in num_cols:
         if col in df.columns:
-            # 빈 문자열을 0으로 처리하고 정수 변환
-            df[col] = pd.to_numeric(
-                df[col].astype(str).str.replace(r'[^0-9]', '', regex=True), 
-                errors='coerce'
-            ).fillna(0).astype(int)
+            # 문자열로 변환 후 숫자만 추출하여 정수로 변환
+            df[col] = df[col].astype(str).str.replace(r'[^0-9\-]', '', regex=True)
+            df[col] = df[col].replace('', '0').replace('-', '0')
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+    
+    # 6. 숫자 컬럼이 아닌 나머지 컬럼의 NaN 값을 빈 문자열로 처리
+    for col in df.columns:
+        if col not in num_cols:
+            df[col] = df[col].fillna("")
 
     # 7. 샘플금액 자동 계산: 요청수량 * 샘플단가
     if "요청수량" in df.columns and "샘플단가" in df.columns and "샘플금액" in df.columns:
@@ -391,12 +392,17 @@ def main():
     num_cols = ["요청수량", "샘플단가", "샘플금액"]
     for col in num_cols:
         if col in edit_df.columns:
-            # 타입이 숫자가 아니면 변환
-            if not pd.api.types.is_integer_dtype(edit_df[col]):
-                edit_df[col] = pd.to_numeric(
-                    edit_df[col].astype(str).str.replace(r'[^0-9]', '', regex=True), 
-                    errors='coerce'
-                ).fillna(0).astype(int)
+            # 타입이 숫자가 아니면 강제 변환
+            try:
+                if not pd.api.types.is_integer_dtype(edit_df[col]):
+                    # 문자열로 변환 후 숫자만 추출
+                    edit_df[col] = edit_df[col].astype(str).str.replace(r'[^0-9\-]', '', regex=True)
+                    edit_df[col] = edit_df[col].replace('', '0').replace('-', '0')
+                    edit_df[col] = pd.to_numeric(edit_df[col], errors='coerce').fillna(0).astype(int)
+            except Exception as e:
+                # 변환 실패 시 0으로 설정
+                edit_df[col] = 0
+                edit_df[col] = edit_df[col].astype(int)
     
     # ✅ 행 삭제용 체크박스 컬럼 추가 (먼저 추가하여 타입 확정)
     if "_삭제" not in edit_df.columns:
@@ -414,17 +420,23 @@ def main():
     if "타임스탬프" in edit_df.columns:
         column_config["타임스탬프"] = st.column_config.TextColumn("타임스탬프", disabled=True)
     
-    # 요청수량: 숫자 형식 (타입 확인 후 설정)
+    # 요청수량: 숫자 형식, 수정 가능하도록 설정
     if "요청수량" in edit_df.columns:
-        if pd.api.types.is_integer_dtype(edit_df["요청수량"]):
-            column_config["요청수량"] = st.column_config.NumberColumn("요청수량", format="%,d")
-        else:
-            # 타입이 맞지 않으면 다시 변환 시도
-            edit_df["요청수량"] = pd.to_numeric(
-                edit_df["요청수량"].astype(str).str.replace(r'[^0-9]', '', regex=True), 
-                errors='coerce'
-            ).fillna(0).astype(int)
-            column_config["요청수량"] = st.column_config.NumberColumn("요청수량", format="%,d")
+        # 타입이 정수형인지 확인하고, 아니면 강제 변환
+        if not pd.api.types.is_integer_dtype(edit_df["요청수량"]):
+            try:
+                edit_df["요청수량"] = edit_df["요청수량"].astype(str).str.replace(r'[^0-9\-]', '', regex=True)
+                edit_df["요청수량"] = edit_df["요청수량"].replace('', '0').replace('-', '0')
+                edit_df["요청수량"] = pd.to_numeric(edit_df["요청수량"], errors='coerce').fillna(0).astype(int)
+            except:
+                edit_df["요청수량"] = 0
+                edit_df["요청수량"] = edit_df["요청수량"].astype(int)
+        # NumberColumn 설정 (disabled=False로 명시하여 수정 가능하게)
+        column_config["요청수량"] = st.column_config.NumberColumn(
+            "요청수량", 
+            format="%,d",
+            disabled=False  # 수정 가능하도록 명시
+        )
     
     # 샘플단가: 천단위 콤마 형식
     if "샘플단가" in edit_df.columns:
