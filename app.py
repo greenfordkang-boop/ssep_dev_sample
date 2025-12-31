@@ -9,9 +9,10 @@ st.set_page_config(page_title="신성EP 샘플 관리 대장", layout="wide")
 SHEET_ID = "1aHe7GQsPnZfMjZVPy4jt0elCEADKubWSSeonhZTKR9E"
 WORKSHEET_NAME = "Form_Responses 1"  # Google Form 실제 응답 탭 이름
 
-# 1. 사용자가 요청한 정확한 순서 정의 
+# 1. 구글 시트와 앱의 순서를 100% 일치시키기 위한 기준 리스트
+# 시트에 적힌 실제 제목과 정확히 일치해야 합니다.
 COLUMN_ORDER = [
-    "NO", "타임스탬프", "신청일자", "업체명", "부서명", "성함", 
+    "타임스탬프", "신청일자", "업체명", "부서명", "성함", 
     "차종(모델)", "품명", "part no", "요청수량", "납기일", 
     "요청사항", "연락처", "이메일", "운송편", "비고", 
     "샘플단가", "샘플금액"
@@ -55,47 +56,51 @@ def load_sheet_as_dataframe():
     values = ws.get_all_values()
     
     if not values or len(values) < 1:
-        return pd.DataFrame(columns=COLUMN_ORDER), ws
+        # 데이터가 없을 경우 헤더만 있는 DF 반환
+        return pd.DataFrame(columns=["NO"] + COLUMN_ORDER), ws
 
-    # 구글 시트의 실제 첫 번째 행(헤더) 
+    # 시트의 헤더와 데이터 분리
     raw_header = [str(h).strip() for h in values[0]]
     raw_data = values[1:]
 
-    # 일단 시트의 원래 순서대로 DF 생성
+    # 2. 일단 시트 원본 그대로 데이터프레임 생성
     df = pd.DataFrame(raw_data, columns=raw_header)
 
-    # [핵심] 시트의 값이 정의한 순서에 맞게 들어가도록 재배치
-    # 시트에 없는 열은 빈 값으로 채우고, 있는 열은 COLUMN_ORDER 순서로 정렬함 
+    # 3. [핵심] '타임스탬프'를 포함하여 정의된 순서대로 열 재정렬
+    # 만약 시트에 특정 열이 없으면 에러 방지를 위해 빈 컬럼 생성
     for col in COLUMN_ORDER:
         if col not in df.columns:
-            df[col] = "" # 시트에 없는 열은 공백 처리
-            
-    # 정의된 순서대로 열 추출 (이 단계에서 값이 제목에 맞게 정렬됨)
+            df[col] = ""
+
+    # 순서 강제 고정 (이 과정에서 데이터 밀림 현상이 해결됩니다)
     df = df[COLUMN_ORDER].copy()
 
-    # NO 컬럼 부여 및 숫자형 데이터 정제 
-    df["NO"] = range(1, len(df) + 1)
-    
+    # 4. 앱 화면 표시용 'NO' 컬럼을 맨 앞에 추가 (시트 저장용 아님)
+    df.insert(0, "NO", range(1, len(df) + 1))
+
+    # 5. 숫자 데이터 형식 변환 (요청수량, 샘플단가, 샘플금액)
     num_cols = ["요청수량", "샘플단가", "샘플금액"]
     for col in num_cols:
         if col in df.columns:
-            # 숫자가 아닌 문자 제거 후 정수 변환 
-            df[col] = pd.to_numeric(df[col].astype(str).str.replace(r'[^0-9]', '', regex=True), errors='coerce').fillna(0).astype(int)
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace(r'[^0-9]', '', regex=True), 
+                errors='coerce'
+            ).fillna(0).astype(int)
 
     return df, ws
 
 def save_dataframe_to_sheet(df: pd.DataFrame, ws):
-    """저장 시에도 반드시 COLUMN_ORDER 순서를 유지하여 시트에 기록 """
+    """저장 시 NO를 제외하고 COLUMN_ORDER 순서로 시트에 기록"""
     try:
-        # 저장 전 최종 정렬 확인
-        df_to_save = df[COLUMN_ORDER].copy().fillna("")
+        # NO 컬럼은 앱 관리용이므로 제외하고 타임스탬프부터 저장
+        to_save = df[COLUMN_ORDER].copy().fillna("")
         
-        # 시트 초기화 후 헤더와 데이터 쓰기 
         ws.clear()
-        ws.update('A1', [df_to_save.columns.tolist()] + df_to_save.values.tolist())
+        # 헤더와 데이터를 리스트로 변환하여 한 번에 업데이트 (성능 최적화)
+        ws.update('A1', [to_save.columns.tolist()] + to_save.values.tolist())
         return True
     except Exception as e:
-        st.error(f"저장 중 오류 발생: {e}")
+        st.error(f"구글 시트 저장 실패: {e}")
         return False
 
 def parse_date_safe(x):
