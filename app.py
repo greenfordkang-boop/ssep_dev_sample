@@ -290,6 +290,19 @@ def main():
 
     # 2) 편집용 데이터 준비 (에디터에 보이는 게 기준)
     edit_df = df.copy()
+    
+    # COLUMN_ORDER 순서로 컬럼 재정렬 (NO는 맨 앞, 나머지는 COLUMN_ORDER 순서)
+    # NO가 있으면 맨 앞에, 그 다음 COLUMN_ORDER 순서대로
+    ordered_cols = ["NO"] if "NO" in edit_df.columns else []
+    for col in COLUMN_ORDER:
+        if col in edit_df.columns:
+            ordered_cols.append(col)
+    # COLUMN_ORDER에 없는 다른 컬럼들도 추가 (예: _삭제 등)
+    for col in edit_df.columns:
+        if col not in ordered_cols:
+            ordered_cols.append(col)
+    edit_df = edit_df[ordered_cols].copy()
+    
     column_config = {}
 
     # NO는 읽기 전용
@@ -311,6 +324,12 @@ def main():
             options=["", "항공", "선박", "핸드캐리"],
             required=False,
         )
+    
+    # 날짜 컬럼 설정
+    date_columns = ["신청일자", "납기일", "도면접수일", "샘플 완료일", "출하일"]
+    for col in date_columns:
+        if col in edit_df.columns:
+            column_config[col] = st.column_config.DateColumn(col)
 
     # ✅ 행 삭제용 체크박스 컬럼 추가
     if "_삭제" not in edit_df.columns:
