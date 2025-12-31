@@ -74,8 +74,21 @@ def load_sheet_as_dataframe():
         df = pd.DataFrame(columns=DEFAULT_COLUMNS)
         return df, ws
 
-    header = values[0]
-    data_rows = values[1:]
+    # 1) 실제 헤더 행 찾기 : "NO" + ("업체명" 또는 "품명") 이 있는 행
+    header_idx = None
+    for i, row in enumerate(values):
+        row_stripped = [str(c).strip() for c in row]
+        if "NO" in row_stripped and ("업체명" in row_stripped or "품명" in row_stripped):
+            header_idx = i
+            break
+
+    # 못 찾으면 첫 번째 행을 헤더로 사용
+    if header_idx is None:
+        header = values[0]
+        data_rows = values[1:]
+    else:
+        header = values[header_idx]
+        data_rows = values[header_idx + 1 :]
 
     # 헤더가 전부 빈 값이면 기본 컬럼 사용
     if not any(str(h).strip() for h in header):
@@ -91,7 +104,6 @@ def load_sheet_as_dataframe():
             row = row[:max_len]
         normalized.append(row)
 
-    # DataFrame 생성 + 컬럼명 정리 (빈 헤더/중복 헤더 방지)
     raw_cols = [str(h).strip() for h in header]
     fixed_cols = []
     seen = {}
@@ -106,28 +118,39 @@ def load_sheet_as_dataframe():
 
     df = pd.DataFrame(normalized, columns=fixed_cols)
 
-    # NO 처리
-    if "NO" not in df.columns:
-        df.insert(0, "NO", range(1, len(df) + 1))
-    else:
-        df["NO"] = pd.to_numeric(df["NO"], errors="coerce")
-        next_no = int(df["NO"].max()) + 1 if df["NO"].notna().any() else 1
-        for i, v in df["NO"].items():
-            if pd.isna(v):
-                df.at[i, "NO"] = next_no
-                next_no += 1
-        df["NO"] = df["NO"].astype(int)
+    key_cands = ["업체명", "품명", "품번", "차종"]
+    key_cols = [c for c in key_cands if c in df.columns]
 
-    # 운송편 컬럼 없으면 추가
-    if "운송편" not in df.columns:
-        df["운송편"] = ""
-
-    # 숫자 컬럼 처리
     qty_col = None
     for c in ["요청수량", "수량"]:
         if c in df.columns:
             qty_col = c
             break
+
+    if key_cols or qty_col:
+        keep_mask = pd.Series(False, index=df.index)
+        for c in key_cols:
+            keep_mask |= df[c].astype(str).str.strip() != ""
+        if qty_col:
+            qty_series = (
+                df[qty_col]
+                .astype(str)
+                .str.replace(r"[^0-9\\-]", "", regex=True)
+                .replace("", "0")
+                .astype(int)
+            )
+            keep_mask |= qty_series != 0
+
+        df = df[keep_mask].reset_index(drop=True)
+
+    if "NO" not in df.columns:
+        df.insert(0, "NO", range(1, len(df) + 1))
+    else:
+        df["NO"] = range(1, len(df) + 1)
+
+    if "운송편" not in df.columns:
+        df["운송편"] = ""
+
     price_cols = [c for c in ["샘플단가", "샘플금액"] if c in df.columns]
 
     if qty_col:
@@ -232,7 +255,7 @@ def require_login():
                 st.session_state.logged_in = False
                 st.session_state.role = None
                 st.session_state.client_name = None
-                st.experimental_rerun()
+                st.rerun()
         return
 
     st.title("🔐 신성EP 샘플 관리 시스템 로그인")
@@ -248,7 +271,7 @@ def require_login():
                 st.session_state.role = "관리자"
                 st.session_state.client_name = None
                 st.success("관리자 로그인 성공")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("관리자 아이디 또는 비밀번호가 올바르지 않습니다.")
         else:
@@ -258,7 +281,7 @@ def require_login():
                 st.session_state.role = "고객사"
                 st.session_state.client_name = CLIENTS[user_id][1]
                 st.success(f"고객사 '{st.session_state.client_name}' 로그인 성공")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("고객사 아이디 또는 비밀번호가 올바르지 않습니다.")
 
@@ -379,7 +402,7 @@ def main():
 
     with b2:
         if st.button("🔄 시트 다시 불러오기"):
-            st.experimental_rerun()
+            st.rerun()
 
 if __name__ == "__main__":
     main()
