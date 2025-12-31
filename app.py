@@ -362,6 +362,61 @@ def main():
 
     st.markdown("---")
     
+    # 고객사 로그인 시 간략한 일정 표시
+    if role == "고객사":
+        st.subheader("📅 접수건수 일정 현황")
+        
+        # 표시할 컬럼 정의
+        schedule_cols = []
+        col_mapping = {
+            "접수일자": "신청일자",
+            "품명": "품명",
+            "part no": "part no",
+            "요청내역": "요청사항",
+            "상태": "진행상태",
+            "납기일(예정)": "납기일"
+        }
+        
+        # 실제 컬럼명으로 매핑
+        display_cols = []
+        actual_cols = []
+        for display_name, actual_col in col_mapping.items():
+            if actual_col in df.columns:
+                display_cols.append(display_name)
+                actual_cols.append(actual_col)
+        
+        if actual_cols:
+            # 간략한 일정 테이블 생성
+            schedule_df = df[actual_cols].copy()
+            schedule_df.columns = display_cols
+            
+            # 납기일이 있는 경우 날짜 형식 정리
+            if "납기일(예정)" in schedule_df.columns:
+                schedule_df["납기일(예정)"] = schedule_df["납기일(예정)"].astype(str).str.strip()
+                schedule_df["납기일(예정)"] = schedule_df["납기일(예정)"].replace("", "-").replace("nan", "-")
+            
+            # 접수일자 형식 정리
+            if "접수일자" in schedule_df.columns:
+                schedule_df["접수일자"] = schedule_df["접수일자"].astype(str).str.strip()
+                schedule_df["접수일자"] = schedule_df["접수일자"].replace("", "-").replace("nan", "-")
+            
+            # 빈 값 처리
+            schedule_df = schedule_df.fillna("-")
+            
+            # 테이블로 표시 (인덱스 없이)
+            st.dataframe(
+                schedule_df,
+                use_container_width=True,
+                hide_index=True,
+                height=min(400, 50 + len(schedule_df) * 35)  # 행 높이에 따라 동적 조정
+            )
+            
+            st.caption(f"총 {len(schedule_df)}건의 접수건이 있습니다.")
+        else:
+            st.info("일정 정보를 표시할 데이터가 없습니다.")
+        
+        st.markdown("---")
+    
     # 미출하건 필터 체크박스
     filter_pending = st.checkbox("🚚 미출하건만 보기", key="filter_pending", help="진행상태가 '출하완료'가 아닌 건만 표시합니다")
     
