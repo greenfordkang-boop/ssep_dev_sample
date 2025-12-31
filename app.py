@@ -310,8 +310,68 @@ def main():
     qty_col = "요청수량" if "요청수량" in df.columns else ("수량" if "수량" in df.columns else None)
     price_cols = [c for c in ["샘플단가", "샘플금액"] if c in df.columns]
 
-    # 🔝 상단 대시보드를 나중에 채우기 위한 컨테이너
-    top = st.container()
+    # ----- 제목 필터 (대시보드 집계용) -----
+    # 👉 이 입력창에 값을 넣으면, 아래 대시보드 숫자가 그 기준으로만 집계됩니다.
+    stats_df = df.copy()
+    if "제목" in stats_df.columns:
+        title_filter = st.text_input(
+            "제목 필터 (대시보드 집계용)",
+            key="title_filter",
+            placeholder="제목에 포함될 키워드를 입력하세요.",
+        )
+        if title_filter.strip():
+            stats_df = stats_df[
+                stats_df["제목"].astype(str).str.contains(title_filter, case=False, na=False)
+            ].copy()
+
+    # ----- 상단 대시보드 (한 줄에 모두 표시) -----
+    st.subheader("📊 샘플 대시보드")
+
+    # 총건수, 수량, 출하완료, 미납, 완료율, 납기지연 → 6개 한 줄
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+
+    # 1) 총 샘플 건수
+    with c1:
+        st.metric("총 샘플 건수", f"{len(stats_df):,} 건")
+
+    # 2) 총 요청 수량
+    with c2:
+        if qty_col and qty_col in stats_df.columns:
+            total_qty = int(stats_df[qty_col].fillna(0).sum())
+            st.metric("총 요청 수량", f"{total_qty:,.0f} EA")
+        else:
+            st.metric("총 요청 수량", "-")
+
+    # 3) 출하완료 건수
+    with c3:
+        completed = 0
+        if "진행상태" in stats_df.columns:
+            completed = (stats_df["진행상태"].astype(str) == "출하완료").sum()
+        st.metric("출하완료 건수", f"{completed:,} 건")
+
+    # 4) 미납 건수 (= 전체 - 출하완료)
+    with c4:
+        pending = max(len(stats_df) - completed, 0)
+        st.metric("미납 건수", f"{pending:,} 건")
+
+    # 5) 완료율
+    with c5:
+        completion_rate = (completed / len(stats_df) * 100) if len(stats_df) > 0 else 0
+        st.metric("완료율", f"{completion_rate:,.1f} %")
+
+    # 6) 납기 지연 건수 (같은 줄에 표시)
+    with c6:
+        delayed = 0
+        if "납기일" in stats_df.columns:
+            today = datetime.today().date()
+            dates = stats_df["납기일"].apply(parse_date_safe)
+            mask = dates.notna()
+            if "진행상태" in stats_df.columns:
+                not_done = stats_df["진행상태"].astype(str) != "출하완료"
+                delayed = ((dates < today) & mask & not_done).sum()
+            else:
+                delayed = ((dates < today) & mask).sum()
+        st.metric("납기 지연 건수", f"{delayed:,} 건")
 
     st.markdown("---")
     st.subheader("📋 샘플 목록 편집")
@@ -356,74 +416,6 @@ def main():
         column_config=column_config,
         key="main_editor",
     )
-
-    # 3) 상단 대시보드: "보이는 화면 기준"으로 집계
-    with top:
-        st.subheader("📊 샘플 대시보드")
-
-        # 삭제 체크된 행은 집계에서 제외
-        stats_df = edited_df.copy()
-        if "_삭제" in stats_df.columns:
-            stats_df = stats_df[~stats_df["_삭제"].fillna(False)]
-            stats_df = stats_df.drop(columns=["_삭제"])
-
-        # (옵션) 제목 텍스트 필터 한 번 더
-        if "제목" in stats_df.columns:
-            title_filter = st.text_input(
-                "제목 필터 (대시보드 집계용)",
-                key="title_filter",
-                placeholder="제목에 포함될 키워드를 입력하세요.",
-            )
-            if title_filter:
-                stats_df = stats_df[
-                    stats_df["제목"].astype(str).str.contains(title_filter, case=False, na=False)
-                ].copy()
-
-        c1, c2, c3, c4, c5 = st.columns(5)
-
-        # 총 샘플 건수
-        with c1:
-            st.metric("총 샘플 건수", f"{len(stats_df):,} 건")
-
-        # 총 요청 수량
-        with c2:
-            if qty_col and qty_col in stats_df.columns:
-                total_qty = int(stats_df[qty_col].fillna(0).sum())
-                st.metric("총 요청 수량", f"{total_qty:,.0f} EA")
-            else:
-                st.metric("총 요청 수량", "-")
-
-        # 출하완료 건수
-        with c3:
-            completed = 0
-            if "진행상태" in stats_df.columns:
-                completed = (stats_df["진행상태"].astype(str) == "출하완료").sum()
-            st.metric("출하완료 건수", f"{completed:,} 건")
-
-        # 미납 건수 (전체 - 출하완료)
-        with c4:
-            pending = max(len(stats_df) - completed, 0)
-            st.metric("미납 건수", f"{pending:,} 건")
-
-        # 완료율
-        with c5:
-            completion_rate = (completed / len(stats_df) * 100) if len(stats_df) > 0 else 0
-            st.metric("완료율", f"{completion_rate:,.1f} %")
-
-        # 납기 지연 건수
-        d1, _, _, _, _ = st.columns(5)
-        with d1:
-            delayed = 0
-            if "납기일" in stats_df.columns:
-                today = datetime.today().date()
-                dates = stats_df["납기일"].apply(parse_date_safe)
-                mask = dates.notna()
-                if "진행상태" in stats_df.columns:
-                    not_done = stats_df["진행상태"].astype(str) != "출하완료"
-                    delayed = ((dates < today) & mask & not_done).sum()
-                else:
-                    delayed = ((dates < today) & mask).sum()
-            st.metric("납기 지연 건수", f"{delayed:,} 건")
 
     # 4) 저장 / 다시 불러오기
     b1, b2 = st.columns(2)
