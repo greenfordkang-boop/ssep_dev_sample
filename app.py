@@ -56,34 +56,28 @@ def load_sheet_as_dataframe():
     values = ws.get_all_values()
     
     if not values or len(values) < 1:
-        # 데이터가 없을 경우 헤더만 있는 DF 반환
         return pd.DataFrame(columns=["NO"] + COLUMN_ORDER), ws
 
-    # 시트의 헤더와 데이터 분리
+    # 1. 시트의 실제 헤더와 데이터를 분리합니다. 
     raw_header = [str(h).strip() for h in values[0]]
     raw_data = values[1:]
 
-    # 2. 일단 시트 원본 그대로 데이터프레임 생성 (컬럼명을 시트 헤더 그대로 사용)
+    # 2. 시트 원본 순서대로 데이터프레임을 생성합니다. 
     df = pd.DataFrame(raw_data, columns=raw_header)
 
-    # 3. [핵심] 시트의 실제 컬럼명과 COLUMN_ORDER를 정확히 매칭하여 데이터 재배치
-    # 시트에 없는 컬럼은 빈 값으로 생성
-    df_reordered = pd.DataFrame(index=df.index)
-    
+    # 3. [데이터 밀림 방지 로직]
+    # COLUMN_ORDER에 정의된 이름이 시트에 있는지 확인하고, 있는 것만 순서대로 가져옵니다.
     for col in COLUMN_ORDER:
-        if col in df.columns:
-            # 시트에 정확히 일치하는 컬럼명이 있으면 그대로 사용
-            df_reordered[col] = df[col]
-        else:
-            # 시트에 없는 컬럼은 빈 값으로 생성
-            df_reordered[col] = ""
-    
-    df = df_reordered
+        if col not in df.columns:
+            df[col] = "" # 시트에 없는 열은 빈 값으로 생성하여 밀림을 방지합니다.
 
-    # 5. 앱 화면 표시용 'NO' 컬럼을 맨 앞에 추가 (시트 저장용 아님)
+    # 4. 사용자가 요청한 COLUMN_ORDER 순서로 모든 열을 재배치합니다.
+    df = df[COLUMN_ORDER].copy()
+
+    # 5. NO(번호) 컬럼은 앱 전용이므로 맨 앞에 추가합니다. 
     df.insert(0, "NO", range(1, len(df) + 1))
 
-    # 6. 숫자 데이터 형식 변환 (요청수량, 샘플단가, 샘플금액)
+    # 6. 숫자 형식 변환 (요청수량, 샘플단가, 샘플금액) 
     num_cols = ["요청수량", "샘플단가", "샘플금액"]
     for col in num_cols:
         if col in df.columns:
@@ -95,13 +89,13 @@ def load_sheet_as_dataframe():
     return df, ws
 
 def save_dataframe_to_sheet(df: pd.DataFrame, ws):
-    """저장 시 NO를 제외하고 COLUMN_ORDER 순서로 시트에 기록"""
+    """저장 시 NO를 제외하고 COLUMN_ORDER 순서로 시트에 기록합니다."""
     try:
-        # NO 컬럼은 앱 관리용이므로 제외하고 타임스탬프부터 저장
+        # NO 컬럼은 시트 저장용이 아니므로 제외합니다. 
         to_save = df[COLUMN_ORDER].copy().fillna("")
         
-        ws.clear()
-        # 헤더와 데이터를 리스트로 변환하여 한 번에 업데이트 (성능 최적화)
+        ws.clear() # 기존 데이터를 지우고 새로 씁니다. 
+        # 헤더를 포함하여 한 번에 업데이트합니다. 
         ws.update('A1', [to_save.columns.tolist()] + to_save.values.tolist())
         return True
     except Exception as e:
