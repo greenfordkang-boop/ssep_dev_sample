@@ -324,12 +324,6 @@ def main():
             options=["", "항공", "선박", "핸드캐리"],
             required=False,
         )
-    
-    # 날짜 컬럼 설정
-    date_columns = ["신청일자", "납기일", "도면접수일", "샘플 완료일", "출하일"]
-    for col in date_columns:
-        if col in edit_df.columns:
-            column_config[col] = st.column_config.DateColumn(col)
 
     # ✅ 행 삭제용 체크박스 컬럼 추가
     if "_삭제" not in edit_df.columns:
