@@ -330,6 +330,34 @@ def load_sheet_as_dataframe_cached():
         if "출하 장소" in df.columns and "출하장소" in df.columns:
             df = df.drop(columns=["출하 장소"])
 
+        # "출하장소" 다음 컬럼부터 특정 컬럼들 제거
+        # NO, 접수일, 담당자, 차종부터 자재요청일까지 삭제
+        if "출하장소" in df.columns:
+            출하장소_idx = list(df.columns).index("출하장소")
+            # 출하장소 다음 컬럼부터 확인
+            cols_after_출하장소 = list(df.columns)[출하장소_idx + 1:]
+            
+            # 삭제할 컬럼 목록
+            cols_to_delete = []
+            for col in cols_after_출하장소:
+                col_str = str(col).strip()
+                # NO, 접수일, 담당자(또는 담당), 차종부터 자재요청일(또는 자재 요청일)까지
+                if col_str in ["NO", "접수일"]:
+                    cols_to_delete.append(col)
+                elif "담당" in col_str:  # 담당자, 담당 등
+                    cols_to_delete.append(col)
+                elif col_str == "차종":
+                    cols_to_delete.append(col)
+                elif "자재" in col_str and "요청" in col_str:  # 자재요청일, 자재 요청일 등
+                    cols_to_delete.append(col)
+                    break  # 자재요청일까지 포함하므로 여기서 중단
+                elif col_str in ["품번", "품명", "부서"]:  # 차종과 자재요청일 사이의 컬럼들
+                    cols_to_delete.append(col)
+            
+            # 컬럼 삭제
+            if cols_to_delete:
+                df = df.drop(columns=cols_to_delete)
+
         # 기본 컬럼이 없으면 추가 (빈 값으로)
         for col in DEFAULT_COLUMNS:
             if col not in df.columns:
