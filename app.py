@@ -15,7 +15,7 @@ WORKSHEET_NAME = "Form_Responses 1"  # Google Form 실제 응답 탭 이름
 # 시트에 적힌 실제 제목과 정확히 일치해야 합니다.
 COLUMN_ORDER = [
     "타임스탬프", "신청일자", "업체명", "부서명", "성함", 
-    "차종(모델)", "품명", "part no", "요청수량", "납기일", 
+    "차종(모델)", "품명", "part no", "요청수량", "납기일", "납기일(예정)",
     "요청사항", "연락처", "이메일", "운송편", "비고", 
     "샘플단가", "샘플금액", "도면접수일", "자재준비", "샘플 완료일", 
     "출하일", "진행상태", "출하 장소"
@@ -374,7 +374,7 @@ def main():
             "part no": "part no",
             "요청내역": "요청사항",
             "상태": "진행상태",
-            "납기일(예정)": "납기일"
+            "납기일(예정)": "납기일(예정)"  # 관리자가 입력한 예상 납기일
         }
         
         # 실제 컬럼명으로 매핑
@@ -390,10 +390,25 @@ def main():
             schedule_df = df[actual_cols].copy()
             schedule_df.columns = display_cols
             
-            # 납기일이 있는 경우 날짜 형식 정리
+            # 납기일(예정)이 있는 경우 날짜 형식 정리
             if "납기일(예정)" in schedule_df.columns:
-                schedule_df["납기일(예정)"] = schedule_df["납기일(예정)"].astype(str).str.strip()
-                schedule_df["납기일(예정)"] = schedule_df["납기일(예정)"].replace("", "-").replace("nan", "-")
+                # 날짜 형식으로 변환 시도
+                def format_date_safe(val):
+                    if pd.isna(val) or val == "" or str(val).strip() == "":
+                        return "-"
+                    try:
+                        # 날짜 객체인 경우
+                        if isinstance(val, (datetime.date, datetime.datetime)):
+                            return val.strftime("%Y-%m-%d")
+                        # 문자열인 경우 파싱 시도
+                        date_val = parse_date_safe(str(val))
+                        if date_val:
+                            return date_val.strftime("%Y-%m-%d")
+                        return str(val).strip() if str(val).strip() else "-"
+                    except:
+                        return str(val).strip() if str(val).strip() else "-"
+                
+                schedule_df["납기일(예정)"] = schedule_df["납기일(예정)"].apply(format_date_safe)
             
             # 접수일자 형식 정리
             if "접수일자" in schedule_df.columns:
@@ -525,6 +540,14 @@ def main():
             options=["접수", "자재준비", "생산중", "생산완료", "출하완료"],
             disabled=True,  # 자동 계산되므로 수정 불가
         )
+    
+    # 납기일: 날짜 형식
+    if "납기일" in edit_df.columns:
+        column_config["납기일"] = st.column_config.DateColumn("납기일")
+    
+    # 납기일(예정): 날짜 형식, 관리자가 입력 가능
+    if "납기일(예정)" in edit_df.columns:
+        column_config["납기일(예정)"] = st.column_config.DateColumn("납기일(예정)")
 
     # 삭제 체크박스 컬럼
     if "_삭제" in edit_df.columns:
