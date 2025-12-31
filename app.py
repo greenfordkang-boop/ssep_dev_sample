@@ -62,7 +62,7 @@ def get_worksheet():
             ws = sh.worksheet(WORKSHEET_NAME)
         except gspread.WorksheetNotFound:
             ws = sh.add_worksheet(title=WORKSHEET_NAME, rows=1000, cols=30)
-            ws.append_row(DEFAULT_COLUMNS)
+            # 새 시트 생성 시 기본 헤더는 시트 구조에 맞게 설정
     else:
         ws = sh.sheet1
     return ws
@@ -70,110 +70,31 @@ def get_worksheet():
 def load_sheet_as_dataframe():
     ws = get_worksheet()
     values = ws.get_all_values()
+    
     if not values:
-        df = pd.DataFrame(columns=DEFAULT_COLUMNS)
+        # 시트가 완전히 비어있을 경우에만 기본값을 사용 (최소한의 안전장치)
+        df = pd.DataFrame(columns=["NO", "접수일", "업체명", "품명"]) 
         return df, ws
 
-    # 1) 실제 헤더 행 찾기 : "NO" + ("업체명" 또는 "품명") 이 있는 행
-    header_idx = None
-    for i, row in enumerate(values):
-        row_stripped = [str(c).strip() for c in row]
-        if "NO" in row_stripped and ("업체명" in row_stripped or "품명" in row_stripped):
-            header_idx = i
-            break
+    # 2) 실제 헤더 행 찾기 (시트의 첫 번째 행을 헤더로 확정)
+    # 구글 시트가 맞다고 하셨으므로 첫 번째 행(values[0])을 컬럼명으로 사용합니다.
+    header = [str(h).strip() for h in values[0] if h] 
+    data_rows = values[1:]
 
-    # 못 찾으면 첫 번째 행을 헤더로 사용
-    if header_idx is None:
-        header = values[0]
-        data_rows = values[1:]
-    else:
-        header = values[header_idx]
-        data_rows = values[header_idx + 1 :]
+    # 3) 데이터프레임 생성
+    df = pd.DataFrame(data_rows, columns=header)
 
-    # 헤더가 전부 빈 값이면 기본 컬럼 사용
-    if not any(str(h).strip() for h in header):
-        header = DEFAULT_COLUMNS
-        data_rows = []
-
-    max_len = len(header)
-    normalized = []
-    for row in data_rows:
-        if len(row) < max_len:
-            row = row + [""] * (max_len - len(row))
-        else:
-            row = row[:max_len]
-        normalized.append(row)
-
-    raw_cols = [str(h).strip() for h in header]
-    fixed_cols = []
-    seen = {}
-    for idx, col in enumerate(raw_cols):
-        name = col if col else f"열{idx+1}"
-        base = name
-        cnt = seen.get(base, 0)
-        if cnt > 0:
-            name = f"{base}_{cnt+1}"
-        seen[base] = cnt + 1
-        fixed_cols.append(name)
-
-    df = pd.DataFrame(normalized, columns=fixed_cols)
-
-    key_cands = ["업체명", "품명", "품번", "차종"]
-    key_cols = [c for c in key_cands if c in df.columns]
-
-    qty_col = None
-    for c in ["요청수량", "수량"]:
-        if c in df.columns:
-            qty_col = c
-            break
-
-    if key_cols or qty_col:
-        keep_mask = pd.Series(False, index=df.index)
-        for c in key_cols:
-            keep_mask |= df[c].astype(str).str.strip() != ""
-        if qty_col:
-            qty_series = (
-                df[qty_col]
-                .astype(str)
-                .str.replace(r"[^0-9\\-]", "", regex=True)
-                .replace("", "0")
-                .astype(int)
-            )
-            keep_mask |= qty_series != 0
-
-        df = df[keep_mask].reset_index(drop=True)
-
-    if "NO" not in df.columns:
-        df.insert(0, "NO", range(1, len(df) + 1))
-    else:
+    # 4) NO 컬럼 자동 부여 (앱 내 관리용)
+    if "NO" in df.columns:
         df["NO"] = range(1, len(df) + 1)
+    else:
+        df.insert(0, "NO", range(1, len(df) + 1))
 
-    if "운송편" not in df.columns:
-        df["운송편"] = ""
-
-    price_cols = [c for c in ["샘플단가", "샘플금액"] if c in df.columns]
-
-    if qty_col:
-        df[qty_col] = (
-            df[qty_col]
-            .replace("", 0)
-            .fillna(0)
-            .astype(str)
-            .str.replace(r"[^0-9\\-]", "", regex=True)
-            .replace("", "0")
-            .astype(int)
-        )
-
-    for c in price_cols:
-        df[c] = (
-            df[c]
-            .replace("", 0)
-            .fillna(0)
-            .astype(str)
-            .str.replace(r"[^0-9\\-]", "", regex=True)
-            .replace("", "0")
-            .astype(int)
-        )
+    # 5) 숫자 컬럼(수량, 금액 등) 자동 변환 로직
+    # 시트의 제목열 이름에 맞춰서 필터링
+    for col in df.columns:
+        if any(keyword in col for keyword in ["수량", "단가", "금액", "가격"]):
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace(r'[^0-9.-]', '', regex=True), errors='coerce').fillna(0).astype(int)
 
     return df, ws
 
