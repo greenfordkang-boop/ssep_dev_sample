@@ -7,7 +7,7 @@ from datetime import datetime
 st.set_page_config(page_title="신성EP 샘플 관리 대장", layout="wide")
 
 SHEET_ID = "1aHe7GQsPnZfMjZVPy4jt0elCEADKubWSSeonhZTKR9E"
-WORKSHEET_NAME = None  # 특정 탭 이름이 있으면 문자열로 지정, 없으면 첫 번째 탭 사용
+WORKSHEET_NAME = "Form_Responses 1"  # Google Form 실제 응답 탭 이름
 
 DEFAULT_COLUMNS = [
     "NO",
@@ -178,17 +178,58 @@ def load_sheet_as_dataframe():
     return df, ws
 
 def save_dataframe_to_sheet(df: pd.DataFrame, ws):
-    df_to_save = df.copy().fillna("")
-    header = list(df_to_save.columns)
-    data = df_to_save.astype(str).values.tolist()
+    """
+    개선된 저장 함수:
+    1. 데이터 타입을 보존 (숫자는 숫자로)
+    2. 불필요한 clear()를 피하고 batch_update를 고려
+    """
     try:
+        # 1. 시트의 기존 헤더 위치 탐색 (기존 로직 유지)
+        values = ws.get_all_values()
+        header_idx = 0
+        for i, row in enumerate(values):
+            row_stripped = [str(c).strip() for c in row]
+            if "NO" in row_stripped and ("업체명" in row_stripped or "품명" in row_stripped):
+                header_idx = i
+                break
+        
+        # 2. 보존해야 할 상단 행(필터 등) 추출
+        preserved_rows = values[:header_idx]
+        
+        # 3. 저장할 데이터 준비 (NaN 처리 및 타입 최적화)
+        df_to_save = df.copy()
+        # 숫자로 변환 가능한 컬럼들 처리
+        num_cols = ["요청수량", "샘플단가", "샘플금액"]
+        for col in num_cols:
+            if col in df_to_save.columns:
+                df_to_save[col] = pd.to_numeric(df_to_save[col], errors='coerce').fillna(0)
+
+        # 날짜 컬럼 처리
+        date_cols = ["접수일", "납기일", "도면접수일", "자재 요청일", "샘플 완료일", "출하일"]
+        for col in date_cols:
+            if col in df_to_save.columns:
+                df_to_save[col] = df_to_save[col].apply(
+                    lambda x: x.strftime("%Y-%m-%d") if hasattr(x, 'strftime') and x is not None else str(x) if x else ""
+                )
+
+        # NaN을 빈 문자열로 변환
+        df_to_save = df_to_save.fillna("")
+
+        # 헤더와 데이터 결합
+        header = df_to_save.columns.tolist()
+        data_body = df_to_save.values.tolist()
+        
+        # 4. 전체 데이터 구성
+        final_output = preserved_rows + [header] + data_body
+        
+        # 5. [중요] clear() 후 바로 update() 하여 공백 시간을 최소화
         ws.clear()
-        ws.append_row(header)
-        if data:
-            ws.append_rows(data)
+        if final_output:
+            ws.update('A1', final_output)
+        
         return True
     except Exception as e:
-        st.error(f"구글 시트 저장 실패: {e}")
+        st.error(f"데이터 정합성 오류 발생: {e}")
         return False
 
 def parse_date_safe(x):
