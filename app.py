@@ -306,55 +306,51 @@ def main():
     # 숫자 컬럼 타입 확인 및 변환 (NumberColumn 설정 전에 필수)
     if "NO" in edit_df.columns:
         try:
-            edit_df["NO"] = pd.to_numeric(edit_df["NO"], errors='coerce').fillna(0).astype(int)
+            if not pd.api.types.is_integer_dtype(edit_df["NO"]):
+                edit_df["NO"] = pd.to_numeric(edit_df["NO"], errors='coerce').fillna(0).astype(int)
         except:
-            pass
+            edit_df["NO"] = pd.Series(range(1, len(edit_df) + 1), dtype=int)
     
     if qty_col and qty_col in edit_df.columns:
         try:
-            edit_df[qty_col] = pd.to_numeric(
-                edit_df[qty_col].astype(str).str.replace(r'[^0-9]', '', regex=True),
-                errors='coerce'
-            ).fillna(0).astype(int)
+            if not pd.api.types.is_integer_dtype(edit_df[qty_col]):
+                edit_df[qty_col] = pd.to_numeric(
+                    edit_df[qty_col].astype(str).str.replace(r'[^0-9]', '', regex=True),
+                    errors='coerce'
+                ).fillna(0).astype(int)
         except:
-            pass
+            edit_df[qty_col] = 0
     
     for c in price_cols:
         if c in edit_df.columns:
             try:
-                edit_df[c] = pd.to_numeric(
-                    edit_df[c].astype(str).str.replace(r'[^0-9]', '', regex=True),
-                    errors='coerce'
-                ).fillna(0).astype(int)
+                if not pd.api.types.is_integer_dtype(edit_df[c]):
+                    edit_df[c] = pd.to_numeric(
+                        edit_df[c].astype(str).str.replace(r'[^0-9]', '', regex=True),
+                        errors='coerce'
+                    ).fillna(0).astype(int)
             except:
-                pass
+                edit_df[c] = 0
+    
+    # ✅ 행 삭제용 체크박스 컬럼 추가 (먼저 추가하여 타입 확정)
+    if "_삭제" not in edit_df.columns:
+        edit_df["_삭제"] = False
+    edit_df["_삭제"] = edit_df["_삭제"].astype(bool)
     
     column_config = {}
 
-    # NO는 읽기 전용 (숫자 타입 확인 후 설정)
-    if "NO" in edit_df.columns:
-        try:
-            if pd.api.types.is_numeric_dtype(edit_df["NO"]):
-                column_config["NO"] = st.column_config.NumberColumn("NO", disabled=True, format="%d")
-        except:
-            pass
+    # NO는 읽기 전용
+    if "NO" in edit_df.columns and pd.api.types.is_integer_dtype(edit_df["NO"]):
+        column_config["NO"] = st.column_config.NumberColumn("NO", disabled=True, format="%d")
 
-    # 수량 컬럼 (숫자 타입 확인 후 설정)
-    if qty_col and qty_col in edit_df.columns:
-        try:
-            if pd.api.types.is_numeric_dtype(edit_df[qty_col]):
-                column_config[qty_col] = st.column_config.NumberColumn(qty_col, format="%,d")
-        except:
-            pass
+    # 수량 컬럼
+    if qty_col and qty_col in edit_df.columns and pd.api.types.is_integer_dtype(edit_df[qty_col]):
+        column_config[qty_col] = st.column_config.NumberColumn(qty_col, format="%,d")
 
-    # 금액 컬럼 (숫자 타입 확인 후 설정)
+    # 금액 컬럼
     for c in price_cols:
-        if c in edit_df.columns:
-            try:
-                if pd.api.types.is_numeric_dtype(edit_df[c]):
-                    column_config[c] = st.column_config.NumberColumn(c, format="%,.0f")
-            except:
-                pass
+        if c in edit_df.columns and pd.api.types.is_integer_dtype(edit_df[c]):
+            column_config[c] = st.column_config.NumberColumn(c, format="%,.0f")
 
     # 운송편 컬럼
     if "운송편" in edit_df.columns:
@@ -364,13 +360,12 @@ def main():
             required=False,
         )
 
-    # ✅ 행 삭제용 체크박스 컬럼 추가
-    if "_삭제" not in edit_df.columns:
-        edit_df["_삭제"] = False
-    column_config["_삭제"] = st.column_config.CheckboxColumn(
-        "삭제",
-        help="체크한 행은 저장 시 삭제됩니다.",
-    )
+    # 삭제 체크박스 컬럼
+    if "_삭제" in edit_df.columns and pd.api.types.is_bool_dtype(edit_df["_삭제"]):
+        column_config["_삭제"] = st.column_config.CheckboxColumn(
+            "삭제",
+            help="체크한 행은 저장 시 삭제됩니다.",
+        )
 
     # 📋 여기서 사용자가 필터/정렬/수정/삭제 체크 모두 수행
     edited_df = st.data_editor(
