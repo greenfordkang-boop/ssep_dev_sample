@@ -387,6 +387,17 @@ def main():
             ordered_cols.append(col)
     edit_df = edit_df[ordered_cols].copy()
     
+    # [중요] 숫자 컬럼 타입 재확인 및 변환 (st.data_editor 전에 필수)
+    num_cols = ["요청수량", "샘플단가", "샘플금액"]
+    for col in num_cols:
+        if col in edit_df.columns:
+            # 타입이 숫자가 아니면 변환
+            if not pd.api.types.is_integer_dtype(edit_df[col]):
+                edit_df[col] = pd.to_numeric(
+                    edit_df[col].astype(str).str.replace(r'[^0-9]', '', regex=True), 
+                    errors='coerce'
+                ).fillna(0).astype(int)
+    
     # ✅ 행 삭제용 체크박스 컬럼 추가 (먼저 추가하여 타입 확정)
     if "_삭제" not in edit_df.columns:
         edit_df["_삭제"] = False
@@ -403,9 +414,17 @@ def main():
     if "타임스탬프" in edit_df.columns:
         column_config["타임스탬프"] = st.column_config.TextColumn("타임스탬프", disabled=True)
     
-    # 요청수량: 숫자 형식
+    # 요청수량: 숫자 형식 (타입 확인 후 설정)
     if "요청수량" in edit_df.columns:
-        column_config["요청수량"] = st.column_config.NumberColumn("요청수량", format="%,d")
+        if pd.api.types.is_integer_dtype(edit_df["요청수량"]):
+            column_config["요청수량"] = st.column_config.NumberColumn("요청수량", format="%,d")
+        else:
+            # 타입이 맞지 않으면 다시 변환 시도
+            edit_df["요청수량"] = pd.to_numeric(
+                edit_df["요청수량"].astype(str).str.replace(r'[^0-9]', '', regex=True), 
+                errors='coerce'
+            ).fillna(0).astype(int)
+            column_config["요청수량"] = st.column_config.NumberColumn("요청수량", format="%,d")
     
     # 샘플단가: 천단위 콤마 형식
     if "샘플단가" in edit_df.columns:
