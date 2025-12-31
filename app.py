@@ -75,17 +75,19 @@ def load_sheet_as_dataframe():
     # 4. 사용자가 요청한 COLUMN_ORDER 순서로 모든 열을 재배치합니다.
     df = df[COLUMN_ORDER].copy()
 
-    # 5. NO(번호) 컬럼은 앱 전용이므로 맨 앞에 추가합니다. 
-    df.insert(0, "NO", range(1, len(df) + 1))
-
-    # 6. 숫자 형식 변환 (요청수량, 샘플단가, 샘플금액) 
+    # 5. [중요] 타입 충돌 방지 로직: 숫자 컬럼을 명시적으로 정수형으로 변환
     num_cols = ["요청수량", "샘플단가", "샘플금액"]
     for col in num_cols:
         if col in df.columns:
+            # 숫자가 아닌 문자(공백 등)를 0으로 처리하고 정수 변환
             df[col] = pd.to_numeric(
                 df[col].astype(str).str.replace(r'[^0-9]', '', regex=True), 
                 errors='coerce'
             ).fillna(0).astype(int)
+
+    # 6. NO(번호) 컬럼은 앱 전용이므로 맨 앞에 추가합니다. 
+    df.insert(0, "NO", range(1, len(df) + 1))
+    df["NO"] = df["NO"].astype(int)
 
     return df, ws
 
@@ -303,54 +305,29 @@ def main():
             ordered_cols.append(col)
     edit_df = edit_df[ordered_cols].copy()
     
-    # 숫자 컬럼 타입 확인 및 변환 (NumberColumn 설정 전에 필수)
-    if "NO" in edit_df.columns:
-        try:
-            if not pd.api.types.is_integer_dtype(edit_df["NO"]):
-                edit_df["NO"] = pd.to_numeric(edit_df["NO"], errors='coerce').fillna(0).astype(int)
-        except:
-            edit_df["NO"] = pd.Series(range(1, len(edit_df) + 1), dtype=int)
-    
-    if qty_col and qty_col in edit_df.columns:
-        try:
-            if not pd.api.types.is_integer_dtype(edit_df[qty_col]):
-                edit_df[qty_col] = pd.to_numeric(
-                    edit_df[qty_col].astype(str).str.replace(r'[^0-9]', '', regex=True),
-                    errors='coerce'
-                ).fillna(0).astype(int)
-        except:
-            edit_df[qty_col] = 0
-    
-    for c in price_cols:
-        if c in edit_df.columns:
-            try:
-                if not pd.api.types.is_integer_dtype(edit_df[c]):
-                    edit_df[c] = pd.to_numeric(
-                        edit_df[c].astype(str).str.replace(r'[^0-9]', '', regex=True),
-                        errors='coerce'
-                    ).fillna(0).astype(int)
-            except:
-                edit_df[c] = 0
-    
     # ✅ 행 삭제용 체크박스 컬럼 추가 (먼저 추가하여 타입 확정)
     if "_삭제" not in edit_df.columns:
         edit_df["_삭제"] = False
     edit_df["_삭제"] = edit_df["_삭제"].astype(bool)
     
+    # 2. st.data_editor 설정 시 타입 명시
     column_config = {}
-
-    # NO는 읽기 전용
-    if "NO" in edit_df.columns and pd.api.types.is_integer_dtype(edit_df["NO"]):
+    
+    # NO 컬럼은 숫자형으로 인식하도록 명시
+    if "NO" in edit_df.columns:
         column_config["NO"] = st.column_config.NumberColumn("NO", disabled=True, format="%d")
-
-    # 수량 컬럼
-    if qty_col and qty_col in edit_df.columns and pd.api.types.is_integer_dtype(edit_df[qty_col]):
-        column_config[qty_col] = st.column_config.NumberColumn(qty_col, format="%,d")
-
-    # 금액 컬럼
-    for c in price_cols:
-        if c in edit_df.columns and pd.api.types.is_integer_dtype(edit_df[c]):
-            column_config[c] = st.column_config.NumberColumn(c, format="%,.0f")
+    
+    # 숫자 컬럼 설정 (여기서 타입이 맞지 않으면 에러 발생)
+    for c in ["요청수량", "샘플단가", "샘플금액"]:
+        if c in edit_df.columns:
+            if c == "요청수량":
+                column_config[c] = st.column_config.NumberColumn(c, format="%,d")
+            else:
+                column_config[c] = st.column_config.NumberColumn(c, format="%,.0f")
+    
+    # [해결포인트] 타임스탬프 등 문자열 컬럼은 명시적으로 TextColumn 설정
+    if "타임스탬프" in edit_df.columns:
+        column_config["타임스탬프"] = st.column_config.TextColumn("타임스탬프", disabled=True)
 
     # 운송편 컬럼
     if "운송편" in edit_df.columns:
@@ -361,7 +338,7 @@ def main():
         )
 
     # 삭제 체크박스 컬럼
-    if "_삭제" in edit_df.columns and pd.api.types.is_bool_dtype(edit_df["_삭제"]):
+    if "_삭제" in edit_df.columns:
         column_config["_삭제"] = st.column_config.CheckboxColumn(
             "삭제",
             help="체크한 행은 저장 시 삭제됩니다.",
