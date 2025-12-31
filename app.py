@@ -303,19 +303,58 @@ def main():
             ordered_cols.append(col)
     edit_df = edit_df[ordered_cols].copy()
     
+    # 숫자 컬럼 타입 확인 및 변환 (NumberColumn 설정 전에 필수)
+    if "NO" in edit_df.columns:
+        try:
+            edit_df["NO"] = pd.to_numeric(edit_df["NO"], errors='coerce').fillna(0).astype(int)
+        except:
+            pass
+    
+    if qty_col and qty_col in edit_df.columns:
+        try:
+            edit_df[qty_col] = pd.to_numeric(
+                edit_df[qty_col].astype(str).str.replace(r'[^0-9]', '', regex=True),
+                errors='coerce'
+            ).fillna(0).astype(int)
+        except:
+            pass
+    
+    for c in price_cols:
+        if c in edit_df.columns:
+            try:
+                edit_df[c] = pd.to_numeric(
+                    edit_df[c].astype(str).str.replace(r'[^0-9]', '', regex=True),
+                    errors='coerce'
+                ).fillna(0).astype(int)
+            except:
+                pass
+    
     column_config = {}
 
-    # NO는 읽기 전용
+    # NO는 읽기 전용 (숫자 타입 확인 후 설정)
     if "NO" in edit_df.columns:
-        column_config["NO"] = st.column_config.NumberColumn("NO", disabled=True, format="%d")
+        try:
+            if pd.api.types.is_numeric_dtype(edit_df["NO"]):
+                column_config["NO"] = st.column_config.NumberColumn("NO", disabled=True, format="%d")
+        except:
+            pass
 
-    # 수량 컬럼
+    # 수량 컬럼 (숫자 타입 확인 후 설정)
     if qty_col and qty_col in edit_df.columns:
-        column_config[qty_col] = st.column_config.NumberColumn(qty_col, format="%,d")
+        try:
+            if pd.api.types.is_numeric_dtype(edit_df[qty_col]):
+                column_config[qty_col] = st.column_config.NumberColumn(qty_col, format="%,d")
+        except:
+            pass
 
-    # 금액 컬럼
+    # 금액 컬럼 (숫자 타입 확인 후 설정)
     for c in price_cols:
-        column_config[c] = st.column_config.NumberColumn(c, format="%,.0f")
+        if c in edit_df.columns:
+            try:
+                if pd.api.types.is_numeric_dtype(edit_df[c]):
+                    column_config[c] = st.column_config.NumberColumn(c, format="%,.0f")
+            except:
+                pass
 
     # 운송편 컬럼
     if "운송편" in edit_df.columns:
