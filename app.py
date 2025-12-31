@@ -432,9 +432,10 @@ def main():
                 edit_df["요청수량"] = 0
                 edit_df["요청수량"] = edit_df["요청수량"].astype(int)
         # NumberColumn 설정 (disabled=False로 명시하여 수정 가능하게)
+        # format="%,d"는 Streamlit에서 지원하지 않으므로 "%d" 사용
         column_config["요청수량"] = st.column_config.NumberColumn(
             "요청수량", 
-            format="%,d",
+            format="%d",  # 천단위 콤마 없이 정수 형식
             disabled=False  # 수정 가능하도록 명시
         )
     
