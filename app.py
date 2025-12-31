@@ -258,9 +258,9 @@ def require_login():
                 st.rerun()
         return
 
-    st.title("🔐 신성EP 샘플 관리 시스템 로그인")
+    st.title("로그인")
 
-    role = st.radio("역할 선택", ["관리자", "고객사"], horizontal=True)
+    role = st.radio("역할을 선택하세요", ["관리자", "고객사"], key="login_role")
     user_id = st.text_input("아이디")
     user_pw = st.text_input("비밀번호", type="password")
 
@@ -275,7 +275,6 @@ def require_login():
             else:
                 st.error("관리자 아이디 또는 비밀번호가 올바르지 않습니다.")
         else:
-            # 고객사 로그인
             if user_id in CLIENTS and CLIENTS[user_id][0] == user_pw:
                 st.session_state.logged_in = True
                 st.session_state.role = "고객사"
